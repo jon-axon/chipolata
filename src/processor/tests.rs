@@ -43,7 +43,9 @@ fn test_load_font_data_overflow_error() {
     processor.font_start_address = processor.memory.max_addressable_size() - 0x1;
     assert_eq!(
         processor.load_font_data().unwrap_err(),
-        Error::MemoryAddressOutOfBounds
+        ErrorDetail::MemoryAddressOutOfBounds {
+            address: (processor.font_start_address + processor.font.font_data_size()) as u16
+        }
     );
 }
 
@@ -70,7 +72,10 @@ fn test_load_program_overflow_error() {
     processor.program_start_address = processor.memory.max_addressable_size() - 0x1;
     assert_eq!(
         processor.load_program().unwrap_err(),
-        Error::MemoryAddressOutOfBounds
+        ErrorDetail::MemoryAddressOutOfBounds {
+            address: (processor.program_start_address + processor.program.program_data_size())
+                as u16
+        }
     );
 }
 
@@ -78,9 +83,8 @@ fn test_load_program_overflow_error() {
 fn test_export_state_snapshot_minimal() {
     let mut processor: Processor = setup_test_processor_chip8();
     processor.frame_buffer.pixels[0][0] = 0xC3;
-    let state_snapshot: StateSnapshot = processor
-        .export_state_snapshot(StateSnapshotVerbosity::Minimal)
-        .unwrap();
+    let state_snapshot: StateSnapshot =
+        processor.export_state_snapshot(StateSnapshotVerbosity::Minimal);
     assert!(
         matches!(state_snapshot, StateSnapshot::MinimalSnapshot { .. })
             && match state_snapshot {
@@ -103,9 +107,8 @@ fn test__state_snapshot_verbose() {
     processor.stack.push(0x30E1).unwrap();
     processor.memory.bytes[0x33] = 0x44;
     processor.cycles = 16473;
-    let state_snapshot: StateSnapshot = processor
-        .export_state_snapshot(StateSnapshotVerbosity::Extended)
-        .unwrap();
+    let state_snapshot: StateSnapshot =
+        processor.export_state_snapshot(StateSnapshotVerbosity::Extended);
     assert!(
         matches!(state_snapshot, StateSnapshot::ExtendedSnapshot { .. })
             && match state_snapshot {
@@ -141,6 +144,18 @@ fn test_execute_cycle() {
     let instruction: [u8; 2] = [0xA1, 0x11];
     processor.memory.write_bytes(0x0BC1, &instruction).unwrap();
     assert!(processor.execute_cycle().is_ok() && processor.program_counter == 0x0BC3);
+}
+
+#[test]
+fn test_execute_cycle_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.program_counter = 0x0BC1;
+    let instruction: [u8; 2] = [0xFF, 0xFF]; // invalid instruction
+    processor.memory.write_bytes(0x0BC1, &instruction).unwrap();
+    assert_eq!(
+        processor.execute_cycle().unwrap_err().inner_error,
+        ErrorDetail::UnknownInstruction { opcode: 0xFFFF }
+    );
 }
 
 #[test]
@@ -211,7 +226,7 @@ fn test_execute_004B() {
     let mut processor: Processor = setup_test_processor_chip8();
     assert_eq!(
         processor.execute_004B().unwrap_err(),
-        Error::UnimplementedInstruction
+        ErrorDetail::UnimplementedInstruction { opcode: 0x4B }
     );
 }
 
@@ -253,7 +268,10 @@ fn test_execute_00EE() {
 #[test]
 fn test_execute_00EE_empty_stack_error() {
     let mut processor: Processor = setup_test_processor_chip8();
-    assert_eq!(processor.execute_00EE().unwrap_err(), Error::PopEmptyStack);
+    assert_eq!(
+        processor.execute_00EE().unwrap_err(),
+        ErrorDetail::PopEmptyStack
+    );
 }
 
 #[test]
@@ -261,7 +279,7 @@ fn test_execute_0NNN() {
     let mut processor: Processor = setup_test_processor_chip8();
     assert_eq!(
         processor.execute_0NNN(0x2F5).unwrap_err(),
-        Error::UnimplementedInstruction
+        ErrorDetail::UnimplementedInstruction { opcode: 0x02F5 }
     );
 }
 
@@ -301,9 +319,11 @@ fn test_execute_3XNN_no_action() {
 #[test]
 fn test_execute_3XNN_invalid_register_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_3XNN(0x10, 0x2F).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -326,9 +346,11 @@ fn test_execute_4XNN_no_action() {
 #[test]
 fn test_execute_4XNN_invalid_register_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_4XNN(0x10, 0x2F).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -353,18 +375,24 @@ fn test_execute_5XY0_no_action() {
 #[test]
 fn test_execute_5XY0_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    operands.insert("y".to_string(), 0xD);
     assert_eq!(
         processor.execute_5XY0(0x10, 0xD).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_5XY0_invalid_register_y_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x3);
+    operands.insert("y".to_string(), 0x10);
     assert_eq!(
         processor.execute_5XY0(0x3, 0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -377,9 +405,11 @@ fn test_execute_6XNN() {
 #[test]
 fn test_execute_6XNN_invalid_register_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_6XNN(0x10, 0x2F).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -400,9 +430,11 @@ fn test_execute_7XNN_overflow() {
 #[test]
 fn test_execute_7XNN_invalid_register_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_7XNN(0x10, 0x1E).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -417,18 +449,24 @@ fn test_execute_8XY0() {
 #[test]
 fn test_execute_8XY0_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    operands.insert("y".to_string(), 0xD);
     assert_eq!(
         processor.execute_8XY0(0x10, 0xD).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_8XY0_invalid_register_y_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x3);
+    operands.insert("y".to_string(), 0x10);
     assert_eq!(
         processor.execute_8XY0(0x3, 0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -443,18 +481,24 @@ fn test_execute_8XY1() {
 #[test]
 fn test_execute_8XY1_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    operands.insert("y".to_string(), 0xD);
     assert_eq!(
         processor.execute_8XY1(0x10, 0xD).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_8XY1_invalid_register_y_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x3);
+    operands.insert("y".to_string(), 0x10);
     assert_eq!(
         processor.execute_8XY1(0x3, 0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -469,18 +513,24 @@ fn test_execute_8XY2() {
 #[test]
 fn test_execute_8XY2_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    operands.insert("y".to_string(), 0xD);
     assert_eq!(
         processor.execute_8XY2(0x10, 0xD).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_8XY2_invalid_register_y_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x3);
+    operands.insert("y".to_string(), 0x10);
     assert_eq!(
         processor.execute_8XY2(0x3, 0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -495,18 +545,24 @@ fn test_execute_8XY3() {
 #[test]
 fn test_execute_8XY3_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x3);
+    operands.insert("y".to_string(), 0x10);
     assert_eq!(
-        processor.execute_8XY3(0x10, 0xD).unwrap_err(),
-        Error::OperandsOutOfBounds
+        processor.execute_8XY3(0x3, 0x10).unwrap_err(),
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_8XY3_invalid_register_y_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x3);
+    operands.insert("y".to_string(), 0x10);
     assert_eq!(
         processor.execute_8XY3(0x3, 0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -539,18 +595,24 @@ fn test_execute_8XY4_overflow() {
 #[test]
 fn test_execute_8XY4_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    operands.insert("y".to_string(), 0xD);
     assert_eq!(
         processor.execute_8XY4(0x10, 0xD).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_8XY4_invalid_register_y_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x3);
+    operands.insert("y".to_string(), 0x10);
     assert_eq!(
         processor.execute_8XY4(0x3, 0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -583,18 +645,24 @@ fn test_execute_8XY5_underflow() {
 #[test]
 fn test_execute_8XY5_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    operands.insert("y".to_string(), 0xD);
     assert_eq!(
         processor.execute_8XY5(0x10, 0xD).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_8XY5_invalid_register_y_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x3);
+    operands.insert("y".to_string(), 0x10);
     assert_eq!(
         processor.execute_8XY5(0x3, 0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -679,18 +747,24 @@ fn test_execute_8XY6_0_shifted_superchip11_mode() {
 #[test]
 fn test_execute_8XY6_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    operands.insert("y".to_string(), 0xD);
     assert_eq!(
         processor.execute_8XY6(0x10, 0xD).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_8XY6_invalid_register_y_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x3);
+    operands.insert("y".to_string(), 0x10);
     assert_eq!(
         processor.execute_8XY6(0x3, 0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -723,18 +797,24 @@ fn test_execute_8XY7_underflow() {
 #[test]
 fn test_execute_8XY7_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    operands.insert("y".to_string(), 0xD);
     assert_eq!(
         processor.execute_8XY7(0x10, 0xD).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_8XY7_invalid_register_y_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x3);
+    operands.insert("y".to_string(), 0x10);
     assert_eq!(
         processor.execute_8XY7(0x3, 0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -767,18 +847,24 @@ fn test_execute_8XYE_0_shifted() {
 #[test]
 fn test_execute_8XYE_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    operands.insert("y".to_string(), 0xD);
     assert_eq!(
         processor.execute_8XYE(0x10, 0xD).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_8XYE_invalid_register_y_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x3);
+    operands.insert("y".to_string(), 0x10);
     assert_eq!(
         processor.execute_8XYE(0x3, 0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -803,18 +889,24 @@ fn test_execute_9XY0_no_action() {
 #[test]
 fn test_execute_9XY0_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    operands.insert("y".to_string(), 0xD);
     assert_eq!(
         processor.execute_9XY0(0x10, 0xD).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_9XY0_invalid_register_y_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x3);
+    operands.insert("y".to_string(), 0x10);
     assert_eq!(
         processor.execute_9XY0(0x3, 0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -872,9 +964,11 @@ fn test_execute_CXNN_0_nondeterministic() {
 #[test]
 fn test_execute_CXNN_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_CXNN(0x10, 0xD).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -922,27 +1016,39 @@ fn test_execute_DXYN_no_pixel_turned_off() {
 #[test]
 fn test_execute_DXYN_invalid_x_register_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    operands.insert("y".to_string(), 0x2);
+    operands.insert("n".to_string(), 0x5);
     assert_eq!(
         processor.execute_DXYN(0x10, 0x2, 0x5).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_DXYN_invalid_y_register_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x2);
+    operands.insert("y".to_string(), 0x10);
+    operands.insert("n".to_string(), 0x5);
     assert_eq!(
         processor.execute_DXYN(0x2, 0x10, 0x5).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_DXYN_invalid_n_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x2);
+    operands.insert("y".to_string(), 0x5);
+    operands.insert("n".to_string(), 0x10);
     assert_eq!(
         processor.execute_DXYN(0x2, 0x5, 0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -967,9 +1073,11 @@ fn test_execute_EX9E_not_pressed() {
 #[test]
 fn test_execute_EX9E_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_EX9E(0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -978,7 +1086,10 @@ fn test_execute_EX9E_invalid_key_error() {
     let mut processor: Processor = setup_test_processor_chip8();
     processor.program_counter = 0x13;
     processor.variable_registers[0x9] = 0x10;
-    assert_eq!(processor.execute_EX9E(0x9).unwrap_err(), Error::InvalidKey);
+    assert_eq!(
+        processor.execute_EX9E(0x9).unwrap_err(),
+        ErrorDetail::InvalidKey { key: 0x10 }
+    );
 }
 
 #[test]
@@ -1002,9 +1113,11 @@ fn test_execute_EXA1_not_pressed() {
 #[test]
 fn test_execute_EXA1_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_EXA1(0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -1013,7 +1126,10 @@ fn test_execute_EXA1_invalid_key_error() {
     let mut processor: Processor = setup_test_processor_chip8();
     processor.program_counter = 0x13;
     processor.variable_registers[0x9] = 0x10;
-    assert_eq!(processor.execute_EXA1(0x9).unwrap_err(), Error::InvalidKey);
+    assert_eq!(
+        processor.execute_EXA1(0x9).unwrap_err(),
+        ErrorDetail::InvalidKey { key: 0x10 }
+    );
 }
 
 #[test]
@@ -1026,9 +1142,11 @@ fn test_execute_FX07() {
 #[test]
 fn test_execute_FX07_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_FX07(0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -1071,9 +1189,11 @@ fn test_execute_FX0A_resume() {
 #[test]
 fn test_execute_FX0A_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_FX0A(0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -1087,9 +1207,11 @@ fn test_execute_FX15() {
 #[test]
 fn test_execute_FX15_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_FX15(0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -1103,9 +1225,11 @@ fn test_execute_FX18() {
 #[test]
 fn test_execute_FX18_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_FX18(0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -1136,19 +1260,23 @@ fn test_execute_FX1E_outside_memory() {
 #[test]
 fn test_execute_FX1E_overflow_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     processor.index_register = 0x0FF2;
     assert_eq!(
         processor.execute_FX1E(0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_FX1E_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_FX1E(0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -1162,19 +1290,23 @@ fn test_execute_FX29() {
 #[test]
 fn test_execute_FX29_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_FX29(0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
 #[test]
 fn test_execute_FX29_invalid_register_x_value_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("character".to_string(), 0x10);
     processor.variable_registers[0x7] = 0x10;
     assert_eq!(
         processor.execute_FX29(0x7).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -1220,9 +1352,11 @@ fn test_execute_FX33_three_digits() {
 #[test]
 fn test_execute_FX33_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_FX33(0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -1305,9 +1439,11 @@ fn test_execute_FX55_multiple_registers_superchip11_mode() {
 #[test]
 fn test_execute_FX55_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_FX55(0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }
 
@@ -1390,8 +1526,10 @@ fn test_execute_FX65_multiple_registers_superchip11_mode() {
 #[test]
 fn test_execute_FX65_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
     assert_eq!(
         processor.execute_FX65(0x10).unwrap_err(),
-        Error::OperandsOutOfBounds
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
     );
 }

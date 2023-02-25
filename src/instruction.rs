@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::ErrorDetail;
 
 /// An enum with a variant for each instruction within the CHIP-8 instruction set.
 #[derive(Debug, PartialEq)]
@@ -43,13 +43,13 @@ pub(crate) enum Instruction {
 
 impl Instruction {
     /// Constructor/builder method that parses the supplied two-byte opcode and returns the
-    /// corresponding [Instruction] enum variant.  Returns [Error::UnknownInstruction] if
+    /// corresponding [Instruction] enum variant.  Returns [ErrorDetail::UnknownInstruction] if
     /// the opcode cannot be parsed or recognised.
     ///
     /// # Arguments
     ///
     /// * `opcode` - a (big-endian) two-byte representation of the opcode to be parsed
-    pub(crate) fn decode_from(opcode: u16) -> Result<Instruction, Error> {
+    pub(crate) fn decode_from(opcode: u16) -> Result<Instruction, ErrorDetail> {
         // Divide the 16-bit opcode into four 4-bit nibbles, using bit shifting and masking
         let first_nibble: u16 = opcode >> 12;
         let second_nibble: u16 = (opcode & 0x0F00) >> 8;
@@ -180,7 +180,7 @@ impl Instruction {
             }),
             // If we have not matched by this point then we cannot identify the
             // instruction; return an Error
-            _ => Err(Error::UnknownInstruction),
+            _ => Err(ErrorDetail::UnknownInstruction { opcode }),
         }
     }
 
@@ -529,7 +529,7 @@ mod tests {
     fn test_decode_unrecognised_opcode() {
         assert_eq!(
             Instruction::decode_from(0xFFFF).unwrap_err(),
-            Error::UnknownInstruction
+            ErrorDetail::UnknownInstruction { opcode: 0xFFFF }
         );
     }
 }

@@ -1,4 +1,4 @@
-use crate::{error::Error, EmulationLevel};
+use crate::{EmulationLevel, ErrorDetail};
 
 /// The default memory size for all system variants (in bytes).
 const CHIPOLATA_MEMORY_SIZE_BYTES: usize = 0x1000;
@@ -11,7 +11,7 @@ const CHIP48_ADDRESSABLE_MEMORY_BYTES: usize = 0x1000;
 const SUPERCHIP11_ADDRESSABLE_MEMORY_BYTES: usize = 0x1000;
 
 /// An abstraction of the CHIP-8 memory space.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Memory {
     /// A stack-allocated array of bytes representing the entire CHIP-8 memory space
     pub bytes: [u8; CHIPOLATA_MEMORY_SIZE_BYTES],
@@ -42,47 +42,53 @@ impl Memory {
 
     /// Returns a copy of the byte in memory at the specified address.  If the address
     /// is outside the addressable range, returns
-    /// [Error::MemoryAddressOutOfBounds](crate::error::Error::MemoryAddressOutOfBounds).
+    /// [ErrorDetail::MemoryAddressOutOfBounds](crate::error::ErrorDetail::MemoryAddressOutOfBounds).
     ///
     /// # Arguments
     ///
     /// * `address` - the memory address at which the byte should be read
-    pub fn read_byte(&self, address: usize) -> Result<u8, Error> {
+    pub fn read_byte(&self, address: usize) -> Result<u8, ErrorDetail> {
         if address >= self.address_limit {
-            return Err(Error::MemoryAddressOutOfBounds);
+            return Err(ErrorDetail::MemoryAddressOutOfBounds {
+                address: address as u16,
+            });
         }
         Ok(self.bytes[address])
     }
 
     /// Writes the passed byte to the specified memory address.  If the address is
     /// outside the addressable range, returns
-    /// [Error::MemoryAddressOutOfBounds].
+    /// [ErrorDetail::MemoryAddressOutOfBounds].
     ///
     /// # Arguments
     ///
     /// * `address` - the memory address at which the byte should be written
     /// * `value` - the byte value to be written
-    pub fn write_byte(&mut self, address: usize, value: u8) -> Result<(), Error> {
+    pub(crate) fn write_byte(&mut self, address: usize, value: u8) -> Result<(), ErrorDetail> {
         if address >= self.address_limit {
-            return Err(Error::MemoryAddressOutOfBounds);
+            return Err(ErrorDetail::MemoryAddressOutOfBounds {
+                address: address as u16,
+            });
         }
         Ok(self.bytes[address] = value)
     }
 
     /// Returns an array slice from memory as per the specified start address and
     /// number of bytes.  If the operands are such that the array slice would extend beyond
-    /// addressable memory then returns [Error::MemoryAddressOutOfBounds].
+    /// addressable memory then returns [ErrorDetail::MemoryAddressOutOfBounds].
     ///
     /// # Arguments
     ///
     /// * `start_address` - the memory address at the start of the range from which to read
     /// * `num_bytes` - the number of bytes to read from memory
-    pub fn read_bytes(&self, start_address: usize, num_bytes: usize) -> Result<&[u8], Error> {
+    pub fn read_bytes(&self, start_address: usize, num_bytes: usize) -> Result<&[u8], ErrorDetail> {
         let final_address: usize = start_address + num_bytes - 1;
         // Check that the start address plus number of bytes to read does not exceed the
         // addressable memory space
         if final_address >= self.address_limit {
-            return Err(Error::MemoryAddressOutOfBounds);
+            return Err(ErrorDetail::MemoryAddressOutOfBounds {
+                address: final_address as u16,
+            });
         }
         Ok(&self.bytes[start_address..(final_address + 1)])
     }
@@ -90,7 +96,7 @@ impl Memory {
     /// Returns a 16-bit unsigned integer constructed by reading two consecutive bytes from memory
     /// starting from the specified address.  The construction is big-endian.  In the unlikely
     /// event that the second byte would fall outside the addressable memory space, this returns
-    /// [Error::MemoryAddressOutOfBounds].
+    /// [ErrorDetail::MemoryAddressOutOfBounds].
     ///
     /// The method is generally used as a convenience for reading opcodes from memory, as
     /// CHIP-8 opcodes are 16-bits in size.
@@ -98,9 +104,11 @@ impl Memory {
     /// # Arguments
     ///
     /// * `start_address` - the memory address of the first (most significant) byte to read
-    pub fn read_two_bytes(&self, start_address: usize) -> Result<u16, Error> {
+    pub fn read_two_bytes(&self, start_address: usize) -> Result<u16, ErrorDetail> {
         if start_address + 1 >= self.address_limit {
-            return Err(Error::MemoryAddressOutOfBounds);
+            return Err(ErrorDetail::MemoryAddressOutOfBounds {
+                address: 1 + start_address as u16,
+            });
         }
         // Construct the u16 from the two u8s through bit shifting and a bitwise OR
         Ok(((self.bytes[start_address] as u16) << 8) | self.bytes[start_address + 1] as u16)
@@ -108,22 +116,24 @@ impl Memory {
 
     /// Writes the passed byte array slice to memory starting at the specified address.
     /// If the operands are such that the operation would write to addresses extending beyond
-    /// the addressable memory then returns [Error::MemoryAddressOutOfBounds].
+    /// the addressable memory then returns [ErrorDetail::MemoryAddressOutOfBounds].
     ///
     /// # Arguments
     ///
     /// * `start_address` - the memory address at the start of the range to which to write
     /// * `bytes_to_write` - the array slice containing the bytes to write to memory
-    pub fn write_bytes(
+    pub(crate) fn write_bytes(
         &mut self,
         start_address: usize,
         bytes_to_write: &[u8],
-    ) -> Result<(), Error> {
+    ) -> Result<(), ErrorDetail> {
         let final_address: usize = start_address + bytes_to_write.len() - 1;
         // Check that the start address plus size of the byte array slice to write does not
         // exceed the number of bytes to read does not exceed the addressable memory space
         if final_address >= self.address_limit {
-            return Err(Error::MemoryAddressOutOfBounds);
+            return Err(ErrorDetail::MemoryAddressOutOfBounds {
+                address: final_address as u16,
+            });
         }
         // Iterate through the passed array slice writing the bytes in turn to successive
         // memory addresses beginning at the specified starting location
@@ -161,7 +171,9 @@ mod tests {
             memory
                 .read_byte(CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES)
                 .unwrap_err(),
-            Error::MemoryAddressOutOfBounds
+            ErrorDetail::MemoryAddressOutOfBounds {
+                address: CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES as u16
+            }
         );
     }
 
@@ -174,7 +186,9 @@ mod tests {
             memory
                 .read_byte(CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES)
                 .unwrap_err(),
-            Error::MemoryAddressOutOfBounds
+            ErrorDetail::MemoryAddressOutOfBounds {
+                address: CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES as u16
+            }
         );
     }
 
@@ -185,7 +199,9 @@ mod tests {
             memory
                 .read_byte(CHIP48_ADDRESSABLE_MEMORY_BYTES)
                 .unwrap_err(),
-            Error::MemoryAddressOutOfBounds
+            ErrorDetail::MemoryAddressOutOfBounds {
+                address: CHIP48_ADDRESSABLE_MEMORY_BYTES as u16
+            }
         );
     }
 
@@ -196,7 +212,9 @@ mod tests {
             memory
                 .read_byte(SUPERCHIP11_ADDRESSABLE_MEMORY_BYTES)
                 .unwrap_err(),
-            Error::MemoryAddressOutOfBounds
+            ErrorDetail::MemoryAddressOutOfBounds {
+                address: SUPERCHIP11_ADDRESSABLE_MEMORY_BYTES as u16
+            }
         );
     }
 
@@ -219,7 +237,9 @@ mod tests {
             memory
                 .read_two_bytes(CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES - 1)
                 .unwrap_err(),
-            Error::MemoryAddressOutOfBounds
+            ErrorDetail::MemoryAddressOutOfBounds {
+                address: CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES as u16
+            }
         );
     }
 
@@ -232,7 +252,9 @@ mod tests {
             memory
                 .read_two_bytes(CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES - 1)
                 .unwrap_err(),
-            Error::MemoryAddressOutOfBounds
+            ErrorDetail::MemoryAddressOutOfBounds {
+                address: CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES as u16
+            }
         );
     }
 
@@ -253,7 +275,9 @@ mod tests {
             memory
                 .write_byte(CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES, 0xF2)
                 .unwrap_err(),
-            Error::MemoryAddressOutOfBounds
+            ErrorDetail::MemoryAddressOutOfBounds {
+                address: CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES as u16
+            }
         );
     }
 
@@ -266,7 +290,9 @@ mod tests {
             memory
                 .write_byte(CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES, 0xF2)
                 .unwrap_err(),
-            Error::MemoryAddressOutOfBounds
+            ErrorDetail::MemoryAddressOutOfBounds {
+                address: CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES as u16
+            }
         );
     }
 
@@ -291,7 +317,9 @@ mod tests {
             memory
                 .read_bytes(CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES - 1, 2)
                 .unwrap_err(),
-            Error::MemoryAddressOutOfBounds
+            ErrorDetail::MemoryAddressOutOfBounds {
+                address: CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES as u16
+            }
         );
     }
 
@@ -304,7 +332,9 @@ mod tests {
             memory
                 .read_bytes(CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES - 1, 2)
                 .unwrap_err(),
-            Error::MemoryAddressOutOfBounds
+            ErrorDetail::MemoryAddressOutOfBounds {
+                address: CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES as u16
+            }
         );
     }
 
@@ -330,7 +360,9 @@ mod tests {
             memory
                 .write_bytes(CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES - 1, &bytes_to_write)
                 .unwrap_err(),
-            Error::MemoryAddressOutOfBounds
+            ErrorDetail::MemoryAddressOutOfBounds {
+                address: CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES as u16
+            }
         );
     }
 
@@ -344,7 +376,9 @@ mod tests {
             memory
                 .write_bytes(CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES - 1, &bytes_to_write)
                 .unwrap_err(),
-            Error::MemoryAddressOutOfBounds
+            ErrorDetail::MemoryAddressOutOfBounds {
+                address: CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES as u16
+            }
         );
     }
 }

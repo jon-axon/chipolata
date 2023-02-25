@@ -61,11 +61,7 @@ impl ChipolataApp {
                 processor.execute_cycle().unwrap();
                 if proc_ready_rx.try_recv().is_ok() {
                     proc_output_tx
-                        .send(
-                            processor
-                                .export_state_snapshot(StateSnapshotVerbosity::Minimal)
-                                .unwrap(),
-                        )
+                        .send(processor.export_state_snapshot(StateSnapshotVerbosity::Minimal))
                         .unwrap();
                 }
                 //}

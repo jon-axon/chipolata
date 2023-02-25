@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::ErrorDetail;
 use std::cmp;
 
 /// The default CHIP-8 display size (64 x 32 pixels).
@@ -11,7 +11,7 @@ const DISPLAY_COLUMN_SIZE_PIXELS: usize = 32;
 /// publically for read access by hosting applications so the display can be graphically rendered,
 /// via a [StateSnapshot](crate::StateSnapshot) obtained from a call to
 /// [Processor::export_state_snapshot()](crate::Processor::export_state_snapshot).
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Display {
     /// A two-dimensional array to hold the state of the display pixels (1 means on, 0 means off).
     ///
@@ -32,7 +32,7 @@ impl Display {
     }
 
     /// Clears the display by recreating the pixel array with default size and all pixels set to off.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.pixels = [[0x0; DISPLAY_ROW_SIZE_PIXELS / 8]; DISPLAY_COLUMN_SIZE_PIXELS];
     }
 
@@ -43,12 +43,12 @@ impl Display {
     /// * `x_start_pixel` - An zero-based integer giving the starting x coordinate of the sprite
     /// * `y_start_pixel` - An zero-based integer giving the starting y coordinate of the sprite
     /// * `sprite` - An array slice holding the bytes that make up the sprite
-    pub fn draw_sprite(
+    pub(crate) fn draw_sprite(
         &mut self,
         x_start_pixel: usize,
         y_start_pixel: usize,
         sprite: &[u8],
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, ErrorDetail> {
         // Sprites are one byte wide, so the height (in pixels) is the length of the sprite byte array,
         // however cap this if necessary so the sprite does not draw off the bottom of the display
         let pixel_rows: usize = cmp::min(
