@@ -3,6 +3,7 @@ use crate::error::Error;
 /// An enum with a variant for each instruction within the CHIP-8 instruction set.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Instruction {
+    Op004B,                               // Turn on COSMAC VIP display
     Op00E0,                               // Clear screen
     Op00EE,                               // Subroutine (call)
     Op0NNN { nnn: u16 },                  // Execute machine language routine
@@ -57,6 +58,7 @@ impl Instruction {
         // Pattern match on the nibbles as appropriate to identify the opcode and return
         // the corresponding enum variant
         match (first_nibble, second_nibble, third_nibble, fourth_nibble) {
+            (0x0, 0x0, 0x4, 0xB) => Ok(Instruction::Op004B),
             (0x0, 0x0, 0xE, 0x0) => Ok(Instruction::Op00E0),
             (0x0, 0x0, 0xE, 0xE) => Ok(Instruction::Op00EE),
             (0x0, ..) => Ok(Instruction::Op0NNN {
@@ -186,6 +188,7 @@ impl Instruction {
     #[allow(dead_code)]
     pub(crate) fn name(&self) -> &str {
         match self {
+            Instruction::Op004B => "004B",
             Instruction::Op00E0 => "00E0",
             Instruction::Op00EE => "00EE",
             Instruction::Op0NNN { .. } => "0NNN",
@@ -229,6 +232,14 @@ impl Instruction {
 mod tests {
     #![allow(non_snake_case)]
     use super::*;
+
+    #[test]
+    fn test_decode_004B() {
+        assert_eq!(
+            Instruction::decode_from(0x004B).unwrap(),
+            Instruction::Op004B
+        );
+    }
 
     #[test]
     fn test_decode_00E0() {

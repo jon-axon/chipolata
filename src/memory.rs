@@ -2,9 +2,10 @@ use crate::{error::Error, EmulationLevel};
 
 /// The default memory size for all system variants (in bytes).
 const CHIPOLATA_MEMORY_SIZE_BYTES: usize = 0x1000;
-// The COSMAC VIP had either 2048 bytes or 4096 bytes of RAM; we assume the larger here.
+// The COSMAC VIP had either 2048 bytes or 4096 bytes of RAM; we allow this to be configured.
 // From this, the last 352 bytes are reserved
-const CHIP8_ADDRESSABLE_MEMORY_BYTES: usize = 0xE90;
+const CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES: usize = 0x6A0;
+const CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES: usize = 0xEA0;
 // For CHIP-48 and SUPER-CHIP 1.1 the full 4096 bytes are addressable
 const CHIP48_ADDRESSABLE_MEMORY_BYTES: usize = 0x1000;
 const SUPERCHIP11_ADDRESSABLE_MEMORY_BYTES: usize = 0x1000;
@@ -29,7 +30,10 @@ impl Memory {
         Self {
             bytes: [0x0; CHIPOLATA_MEMORY_SIZE_BYTES],
             address_limit: match emulation_level {
-                EmulationLevel::Chip8 => CHIP8_ADDRESSABLE_MEMORY_BYTES,
+                EmulationLevel::Chip8 {
+                    memory_limit_2k: true,
+                } => CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES,
+                EmulationLevel::Chip8 { .. } => CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES,
                 EmulationLevel::Chip48 => CHIP48_ADDRESSABLE_MEMORY_BYTES,
                 EmulationLevel::SuperChip11 => SUPERCHIP11_ADDRESSABLE_MEMORY_BYTES,
             },
@@ -141,17 +145,34 @@ mod tests {
 
     #[test]
     fn test_read_byte() {
-        let mut memory = Memory::new(EmulationLevel::Chip8);
+        let mut memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
         memory.bytes[0x3] = 0xF2;
         assert_eq!(memory.read_byte(0x3).unwrap(), 0xF2);
     }
 
     #[test]
-    fn test_read_byte_out_of_bounds_error() {
-        let memory = Memory::new(EmulationLevel::Chip8);
+    fn test_read_byte_out_of_bounds_chip8_small_error() {
+        let memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: true,
+        });
         assert_eq!(
             memory
-                .read_two_bytes(CHIP8_ADDRESSABLE_MEMORY_BYTES)
+                .read_byte(CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES)
+                .unwrap_err(),
+            Error::MemoryAddressOutOfBounds
+        );
+    }
+
+    #[test]
+    fn test_read_byte_out_of_bounds_chip8_large_error() {
+        let memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
+        assert_eq!(
+            memory
+                .read_byte(CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES)
                 .unwrap_err(),
             Error::MemoryAddressOutOfBounds
         );
@@ -162,7 +183,7 @@ mod tests {
         let memory = Memory::new(EmulationLevel::Chip48);
         assert_eq!(
             memory
-                .read_two_bytes(CHIP48_ADDRESSABLE_MEMORY_BYTES)
+                .read_byte(CHIP48_ADDRESSABLE_MEMORY_BYTES)
                 .unwrap_err(),
             Error::MemoryAddressOutOfBounds
         );
@@ -173,7 +194,7 @@ mod tests {
         let memory = Memory::new(EmulationLevel::SuperChip11);
         assert_eq!(
             memory
-                .read_two_bytes(SUPERCHIP11_ADDRESSABLE_MEMORY_BYTES)
+                .read_byte(SUPERCHIP11_ADDRESSABLE_MEMORY_BYTES)
                 .unwrap_err(),
             Error::MemoryAddressOutOfBounds
         );
@@ -181,18 +202,35 @@ mod tests {
 
     #[test]
     fn test_read_two_bytes() {
-        let mut memory = Memory::new(EmulationLevel::Chip8);
+        let mut memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
         memory.bytes[0x3] = 0xF2;
         memory.bytes[0x4] = 0x1C;
         assert_eq!(memory.read_two_bytes(0x3).unwrap(), 0xF21C);
     }
 
     #[test]
-    fn test_read_two_bytes_out_of_bounds_error() {
-        let memory = Memory::new(EmulationLevel::Chip8);
+    fn test_read_two_bytes_out_of_bounds_chip8_small_error() {
+        let memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: true,
+        });
         assert_eq!(
             memory
-                .read_two_bytes(CHIP8_ADDRESSABLE_MEMORY_BYTES - 1)
+                .read_two_bytes(CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES - 1)
+                .unwrap_err(),
+            Error::MemoryAddressOutOfBounds
+        );
+    }
+
+    #[test]
+    fn test_read_two_bytes_out_of_bounds_chip8_large_error() {
+        let memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
+        assert_eq!(
+            memory
+                .read_two_bytes(CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES - 1)
                 .unwrap_err(),
             Error::MemoryAddressOutOfBounds
         );
@@ -200,16 +238,33 @@ mod tests {
 
     #[test]
     fn test_write_byte() {
-        let mut memory = Memory::new(EmulationLevel::Chip8);
+        let mut memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
         assert!(memory.write_byte(0x3, 0xF2).is_ok() && memory.bytes[0x3] == 0xF2);
     }
 
     #[test]
-    fn test_write_byte_out_of_bounds_error() {
-        let mut memory = Memory::new(EmulationLevel::Chip8);
+    fn test_write_byte_out_of_bounds_chip8_small_error() {
+        let mut memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: true,
+        });
         assert_eq!(
             memory
-                .write_byte(CHIP8_ADDRESSABLE_MEMORY_BYTES, 0xF2)
+                .write_byte(CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES, 0xF2)
+                .unwrap_err(),
+            Error::MemoryAddressOutOfBounds
+        );
+    }
+
+    #[test]
+    fn test_write_byte_out_of_bounds_chip8_large_error() {
+        let mut memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
+        assert_eq!(
+            memory
+                .write_byte(CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES, 0xF2)
                 .unwrap_err(),
             Error::MemoryAddressOutOfBounds
         );
@@ -217,7 +272,9 @@ mod tests {
 
     #[test]
     fn test_read_bytes() {
-        let mut memory = Memory::new(EmulationLevel::Chip8);
+        let mut memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
         memory.bytes[0x3] = 0xF2;
         memory.bytes[0x4] = 0x18;
         memory.bytes[0x5] = 0xCC;
@@ -226,11 +283,26 @@ mod tests {
     }
 
     #[test]
-    fn test_read_bytes_out_of_bounds_error() {
-        let memory = Memory::new(EmulationLevel::Chip8);
+    fn test_read_bytes_out_of_bounds_chip8_small_error() {
+        let memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: true,
+        });
         assert_eq!(
             memory
-                .read_bytes(CHIP8_ADDRESSABLE_MEMORY_BYTES - 1, 2)
+                .read_bytes(CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES - 1, 2)
+                .unwrap_err(),
+            Error::MemoryAddressOutOfBounds
+        );
+    }
+
+    #[test]
+    fn test_read_bytes_out_of_bounds_chip8_large_error() {
+        let memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
+        assert_eq!(
+            memory
+                .read_bytes(CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES - 1, 2)
                 .unwrap_err(),
             Error::MemoryAddressOutOfBounds
         );
@@ -238,7 +310,9 @@ mod tests {
 
     #[test]
     fn test_write_bytes() {
-        let mut memory = Memory::new(EmulationLevel::Chip8);
+        let mut memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
         let bytes_to_write: [u8; 3] = [0xF2, 0x18, 0xCC];
         memory.write_bytes(0x3, &bytes_to_write).unwrap();
         assert!(
@@ -247,12 +321,28 @@ mod tests {
     }
 
     #[test]
-    fn test_write_bytes_out_of_bounds_error() {
-        let mut memory = Memory::new(EmulationLevel::Chip8);
+    fn test_write_bytes_out_of_bounds_chip8_small_error() {
+        let mut memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: true,
+        });
         let bytes_to_write: [u8; 2] = [0xF2, 0x18];
         assert_eq!(
             memory
-                .write_bytes(CHIP8_ADDRESSABLE_MEMORY_BYTES - 1, &bytes_to_write)
+                .write_bytes(CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES - 1, &bytes_to_write)
+                .unwrap_err(),
+            Error::MemoryAddressOutOfBounds
+        );
+    }
+
+    #[test]
+    fn test_write_bytes_out_of_bounds_chip8_large_error() {
+        let mut memory = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
+        let bytes_to_write: [u8; 2] = [0xF2, 0x18];
+        assert_eq!(
+            memory
+                .write_bytes(CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES - 1, &bytes_to_write)
                 .unwrap_err(),
             Error::MemoryAddressOutOfBounds
         );

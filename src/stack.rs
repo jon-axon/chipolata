@@ -29,7 +29,7 @@ impl Stack {
             bytes: [0x0; CHIPOLATA_STACK_DEPTH],
             pointer: 0,
             stack_size_limit: match emulation_level {
-                EmulationLevel::Chip8 => CHIP8_STACK_DEPTH,
+                EmulationLevel::Chip8 { .. } => CHIP8_STACK_DEPTH,
                 EmulationLevel::Chip48 => CHIP48_STACK_DEPTH,
                 EmulationLevel::SuperChip11 => SUPERCHIP11_STACK_DEPTH,
             },
@@ -74,7 +74,9 @@ mod tests {
 
     #[test]
     fn test_pop() {
-        let mut stack: Stack = Stack::new(EmulationLevel::Chip8);
+        let mut stack: Stack = Stack::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
         stack.bytes[0] = 0xC4;
         stack.pointer = 1;
         assert!(stack.pop().unwrap() == 0xC4 && stack.pointer == 0);
@@ -82,13 +84,17 @@ mod tests {
 
     #[test]
     fn test_pop_empty_error() {
-        let mut stack: Stack = Stack::new(EmulationLevel::Chip8);
+        let mut stack: Stack = Stack::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
         assert_eq!(stack.pop().unwrap_err(), Error::PopEmptyStack);
     }
 
     #[test]
     fn test_push() {
-        let mut stack: Stack = Stack::new(EmulationLevel::Chip8);
+        let mut stack: Stack = Stack::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
         stack.bytes[0] = 0xC4;
         stack.pointer = 1;
         assert!(stack.push(0xFF).is_ok() && stack.bytes[1] == 0xFF && stack.pointer == 2);
@@ -96,7 +102,9 @@ mod tests {
 
     #[test]
     fn test_push_full_chip8_mode_error() {
-        let mut stack: Stack = Stack::new(EmulationLevel::Chip8);
+        let mut stack: Stack = Stack::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+        });
         stack.pointer = CHIP8_STACK_DEPTH;
         assert_eq!(stack.push(0xFF).unwrap_err(), Error::PushFullStack);
     }

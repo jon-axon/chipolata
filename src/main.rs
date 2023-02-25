@@ -1,4 +1,5 @@
 use chipolata::EmulationLevel;
+use chipolata::COSMAC_VIP_PROCESSOR_SPEED_HERTZ;
 // #![allow(unused)]
 use chipolata::Options;
 use chipolata::Processor;
@@ -29,11 +30,17 @@ struct ChipolataApp {
 
 impl ChipolataApp {
     pub fn new() -> Self {
-        let program_data = fs::read("roms\\tests\\bc_test.ch8").unwrap();
+        let program_data =
+            fs::read("roms\\demos\\Trip8 Demo (2008) [Revival Studios].ch8").unwrap();
         let program: Program = Program::new(program_data);
         let mut options: Options = Options::default();
         options.processor_speed_hertz = 2500;
         options.emulation_level = EmulationLevel::SuperChip11;
+        // options.processor_speed_hertz = COSMAC_VIP_PROCESSOR_SPEED_HERTZ;
+        // options.use_variable_cycle_timings = true;
+        // options.emulation_level = EmulationLevel::Chip8 {
+        //     memory_limit_2k: false,
+        // };
         let mut processor = Processor::initialise_and_load(program, options).unwrap();
         let (proc_input_tx, proc_input_rx) = mpsc::channel();
         let (proc_output_tx, proc_output_rx) = mpsc::channel();
