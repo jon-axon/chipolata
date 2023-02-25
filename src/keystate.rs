@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use crate::error::Error;
+use crate::error::ErrorDetail;
 
 /// The default number of keys in the CHIP-8 keypad.
 const NUMBER_OF_KEYS: u8 = 16;
@@ -21,30 +21,30 @@ impl KeyState {
     }
 
     /// Returns true if the specified key is pressed, false if the specified key is not
-    /// pressed, and returns an [Error::InvalidKey](crate::error::Error::InvalidKey) if
+    /// pressed, and returns an [ErrorDetail::InvalidKey](crate::error::ErrorDetail::InvalidKey) if
     /// the specified key is invalid.
     ///
     /// # Arguments
     ///
     /// * `key` - the hex ordinal of the key (valid range 0x0 to 0xF inclusive)
-    pub(crate) fn is_key_pressed(&self, key: u8) -> Result<bool, Error> {
+    pub(crate) fn is_key_pressed(&self, key: u8) -> Result<bool, ErrorDetail> {
         match key {
             n if n < NUMBER_OF_KEYS => Ok(self.keys_pressed[n as usize]),
-            _ => Err(Error::InvalidKey),
+            _ => Err(ErrorDetail::InvalidKey { key }),
         }
     }
 
-    /// Sets the state of the specified key; returns an [Error::InvalidKey] if the
+    /// Sets the state of the specified key; returns an [ErrorDetail::InvalidKey] if the
     /// specified key is invalid.
     ///
     /// # Arguments
     ///
     /// * `key` - the hex ordinal of the key (valid range 0x0 to 0xF inclusive)
     /// * `status` - boolean representing key state (true meaning pressed)
-    pub(crate) fn set_key_status(&mut self, key: u8, status: bool) -> Result<(), Error> {
+    pub(crate) fn set_key_status(&mut self, key: u8, status: bool) -> Result<(), ErrorDetail> {
         match key {
             n if n < NUMBER_OF_KEYS => Ok(self.keys_pressed[n as usize] = status),
-            _ => Err(Error::InvalidKey),
+            _ => Err(ErrorDetail::InvalidKey { key }),
         }
     }
 
@@ -89,7 +89,9 @@ mod tests {
         let keys: KeyState = KeyState::new();
         assert_eq!(
             keys.is_key_pressed(NUMBER_OF_KEYS).unwrap_err(),
-            Error::InvalidKey
+            ErrorDetail::InvalidKey {
+                key: NUMBER_OF_KEYS
+            }
         );
     }
 
@@ -105,7 +107,9 @@ mod tests {
         let mut keys: KeyState = KeyState::new();
         assert_eq!(
             keys.set_key_status(NUMBER_OF_KEYS, true).unwrap_err(),
-            Error::InvalidKey
+            ErrorDetail::InvalidKey {
+                key: NUMBER_OF_KEYS
+            }
         );
     }
 

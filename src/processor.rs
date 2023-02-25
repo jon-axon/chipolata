@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use super::display::Display;
-use super::error::Error;
+use super::error::{ChipolataError, ErrorDetail};
 use super::font::Font;
 use super::instruction::Instruction;
 use super::keystate::KeyState;
@@ -10,13 +10,15 @@ use super::options::Options;
 use super::program::Program;
 use super::stack::Stack;
 use rand::Rng;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+mod execute; // separate sub-module for all the instruction execution methods
 #[cfg(test)]
-mod tests;
+mod tests; // functional unit tests
+#[cfg(test)]
+mod timing_tests; // non-functional (timing-related) unit tests
 
-/// The default CHIP-8 font start address within memory.
-const DEFAULT_FONT_ADDRESS: usize = 0x50;
 /// The number of ms that should pass inbetween decrements of delay and sound timers.
 const TIMER_DECREMENT_INTERVAL_MICROSECONDS: u128 = 16667;
 /// The number of variable registers available.
@@ -25,13 +27,16 @@ const VARIABLE_REGISTER_COUNT: usize = 16;
 const MAX_SPRITE_HEIGHT: u8 = 15;
 /// The number of font sprites.
 const FONT_SPRITE_COUNT: u8 = 15;
+/// The number of COSMAC VIP cycles used to execute one CHIP-8 interpreter cycle
+/// (used when emulating original COSMAC VIP variable instruction timings)
+const COSMAC_VIP_MACHINE_CYCLES_PER_CYCLE: u64 = 8;
 
 /// An enum to indicate which extension of CHIP-8 is to be emulated.  See external
 /// documentation for details of the differences in each case.
 #[derive(Copy, Clone)]
 pub enum EmulationLevel {
-    /// The original CHIP-8 interpreter for the RCA COSMAC VIP
-    Chip8,
+    /// The original CHIP-8 interpreter for the RCA COSMAC VIP, optionally limited to 2k RAM
+    Chip8 { memory_limit_2k: bool },
     /// Re-implemented CHIP-8 interpreter for the HP48 graphing calculators
     Chip48,
     /// Version 1.1 of the SUPER-CHIP interpreter for HP48S and HP48SX graphing calculators
@@ -67,6 +72,7 @@ pub enum StateSnapshotVerbosity {
 
 /// An enum with variants representing the different Chipolata state snapshots that can be
 /// returned to hosting applications for processing
+#[derive(Debug, PartialEq)]
 pub enum StateSnapshot {
     /// Minimal snapshot containing only the frame buffer state
     MinimalSnapshot { frame_buffer: Display },
@@ -113,6 +119,7 @@ pub struct Processor {
     font_start_address: usize, // The start address in memory at which the font is loaded
     program_start_address: usize, // The start address in memory at which the program is loaded
     processor_speed_hertz: u64, // Used to calculate the time between execute cycles
+    use_variable_cycle_timings: bool, // If true, use original COSMAC VIP cycle timings by opcode
     emulation_level: EmulationLevel, // Component and instruction-compatibility configuration
 }
 
@@ -124,7 +131,7 @@ impl Processor {
     ///
     /// * `program` - a [Program] instance holding the bytes of the ROM to be executed
     /// * `options` - an [Options] instance holding Chipolata start-up configuration information
-    pub fn initialise_and_load(program: Program, options: Options) -> Result<Self, Error> {
+    pub fn initialise_and_load(program: Program, options: Options) -> Result<Self, ChipolataError> {
         let mut processor = Processor {
             frame_buffer: Display::new(),
             stack: Stack::new(options.emulation_level),
@@ -141,14 +148,19 @@ impl Processor {
             last_execution_cycle_complete: Instant::now(),
             font: Font::default(),
             program: program,
-            font_start_address: DEFAULT_FONT_ADDRESS,
+            font_start_address: options.font_start_address as usize,
             program_start_address: options.program_start_address as usize,
             processor_speed_hertz: options.processor_speed_hertz,
+            use_variable_cycle_timings: options.use_variable_cycle_timings,
             emulation_level: options.emulation_level,
         };
-        processor.load_font_data()?;
+        if let Err(e) = processor.load_font_data() {
+            return Err(processor.crash(e));
+        }
         processor.status = ProcessorStatus::Initialised;
-        processor.load_program()?;
+        if let Err(e) = processor.load_program() {
+            return Err(processor.crash(e));
+        }
         processor.status = ProcessorStatus::ProgramLoaded;
         Ok(processor)
     }
@@ -179,15 +191,12 @@ impl Processor {
     /// # Arguments
     ///
     /// * `verbosity` - the amount of state that should be returned
-    pub fn export_state_snapshot(
-        &self,
-        verbosity: StateSnapshotVerbosity,
-    ) -> Result<StateSnapshot, Error> {
+    pub fn export_state_snapshot(&self, verbosity: StateSnapshotVerbosity) -> StateSnapshot {
         match verbosity {
-            StateSnapshotVerbosity::Minimal => Ok(StateSnapshot::MinimalSnapshot {
+            StateSnapshotVerbosity::Minimal => StateSnapshot::MinimalSnapshot {
                 frame_buffer: self.frame_buffer.clone(),
-            }),
-            StateSnapshotVerbosity::Extended => Ok(StateSnapshot::ExtendedSnapshot {
+            },
+            StateSnapshotVerbosity::Extended => StateSnapshot::ExtendedSnapshot {
                 frame_buffer: self.frame_buffer.clone(),
                 stack: self.stack.clone(),
                 memory: self.memory.clone(),
@@ -197,7 +206,7 @@ impl Processor {
                 delay_timer: self.delay_timer,
                 sound_timer: self.sound_timer,
                 cycles: self.cycles,
-            }),
+            },
         }
     }
 
@@ -208,17 +217,22 @@ impl Processor {
     ///
     /// * `key` - the hex ordinal of the key (valid range 0x0 to 0xF inclusive)
     /// * `status` - the value to set for the specified key (true means pressed)
-    pub fn set_key_status(&mut self, key: u8, status: bool) -> Result<(), Error> {
-        Ok(self.keystate.set_key_status(key, status)?)
+    pub fn set_key_status(&mut self, key: u8, status: bool) -> Result<(), ChipolataError> {
+        if let Err(e) = self.keystate.set_key_status(key, status) {
+            return Err(self.crash(e));
+        }
+        Ok(())
     }
 
     /// Loads the processor's font data into memory.  If the size of the font data combined with
     /// the specified start location in memory would cause a write to unaddressable memory, then
-    /// return an [Error::MemoryAddressOutOfBounds].
-    fn load_font_data(&mut self) -> Result<(), Error> {
+    /// return an [ErrorDetail::MemoryAddressOutOfBounds].
+    fn load_font_data(&mut self) -> Result<(), ErrorDetail> {
         //
         if self.font_start_address + self.font.font_data_size() >= self.program_start_address {
-            return Err(Error::MemoryAddressOutOfBounds);
+            return Err(ErrorDetail::MemoryAddressOutOfBounds {
+                address: (self.font_start_address + self.font.font_data_size()) as u16,
+            });
         }
         self.memory
             .write_bytes(self.font_start_address, self.font.font_data())?;
@@ -227,21 +241,33 @@ impl Processor {
 
     /// Loads the processor's program data into memory.  If the size of the program data combined
     /// with the specified start location in memory would cause a write to unaddressable memory,
-    /// then return an [Error::MemoryAddressOutOfBounds].
-    fn load_program(&mut self) -> Result<(), Error> {
+    /// then return an [ErrorDetail::MemoryAddressOutOfBounds].
+    fn load_program(&mut self) -> Result<(), ErrorDetail> {
         if self.program_start_address + self.program.program_data_size()
             >= self.memory.max_addressable_size()
         {
-            return Err(Error::MemoryAddressOutOfBounds);
+            return Err(ErrorDetail::MemoryAddressOutOfBounds {
+                address: (self.program_start_address + self.program.program_data_size()) as u16,
+            });
         }
         self.memory
             .write_bytes(self.program_start_address, self.program.program_data())?;
         Ok(())
     }
 
+    /// Helper method that "crashes" the processor when an [ErrorDetail] instance is returned from a
+    /// function call, and wraps this is in an appropriate [ChipolataError] instance before returning
+    fn crash(&mut self, inner_error: ErrorDetail) -> ChipolataError {
+        self.status = ProcessorStatus::Crashed;
+        ChipolataError {
+            state_snapshot_dump: self.export_state_snapshot(StateSnapshotVerbosity::Extended),
+            inner_error,
+        }
+    }
+
     /// Executes one iteration of the Chipolata fetch -> decode -> execute cycle.  Returns a boolean
     /// indicating whether the display frame buffer was updated this cycle.
-    pub fn execute_cycle(&mut self) -> Result<bool, Error> {
+    pub fn execute_cycle(&mut self) -> Result<bool, ChipolataError> {
         // Set processor state to Running
         self.status = ProcessorStatus::Running;
         // Increment the cycles counter
@@ -251,20 +277,14 @@ impl Processor {
         // Fetch two byte opcode from current Program Counter memory location
         let opcode: u16 = match self.memory.read_two_bytes(self.program_counter as usize) {
             Ok(opcode) => opcode,
-            Err(e) => {
-                self.status = ProcessorStatus::Crashed;
-                return Err(e);
-            }
+            Err(e) => return Err(self.crash(e)),
         };
         // Increment Program Counter (by two bytes, as we have 16-bit opcodes)
         self.program_counter += 0x2;
         // Decode the opcode into an instruction, setting processor state to Crashed on error
         let instruction: Instruction = match Instruction::decode_from(opcode) {
             Ok(instruction) => instruction,
-            Err(e) => {
-                self.status = ProcessorStatus::Crashed;
-                return Err(e);
-            }
+            Err(e) => return Err(self.crash(e)),
         };
         // If the instruction is one that updates the display, set a local flag to true
         let display_updated: bool = match instruction {
@@ -272,21 +292,47 @@ impl Processor {
             Instruction::OpDXYN { .. } => true,
             _ => false,
         };
-        // Execute the instruction, setting processor state to Crashed on error
-        if let Err(e) = self.execute(instruction) {
-            self.status = ProcessorStatus::Crashed;
-            return Err(e);
-        }
+        // Execute the instruction, setting processor state to Crashed on error, and returning
+        // the number of cycles the original COSMAC VIP interpreter would have used for this
+        let cosmac_cycles: u64 = match self.execute(instruction) {
+            Ok(timing) => timing,
+            Err(e) => return Err(self.crash(e)),
+        };
         // In order to simulate the configured processor speed, we now spin until the appropriate
         // time has passed since the last cycle completed
-        while self.last_execution_cycle_complete.elapsed()
-            < Duration::from_micros(1_000_000_u64 / self.processor_speed_hertz)
-        {
+        let target_cycle_duration: Duration = self.calculate_cycle_duration(cosmac_cycles);
+        while self.last_execution_cycle_complete.elapsed() < target_cycle_duration {
             // spin
         }
         self.last_execution_cycle_complete = Instant::now();
         // Return successfully, passing the flag indicating whether the display was updated this cycle
         return Ok(display_updated);
+    }
+
+    /// Internal helper function that returns the Duration a cycle should be emulated to take,
+    /// based on the specified processor speed and emulation mode (fixed cycles vs COSMAC
+    /// variable instruction timing).
+    ///
+    /// # Arguments
+    ///
+    /// * `cosmac_cycles` - if using COSMAC variable instruction timings, this is the number
+    /// of COSMAC interpreter cycles taken to execute the instruction in question (returned
+    /// by the relevant execute() method).  If using fixed cycle timings, this parameter is
+    /// ignored by the function.
+    fn calculate_cycle_duration(&self, cosmac_cycles: u64) -> Duration {
+        let execution_duration: Duration;
+        if self.use_variable_cycle_timings {
+            // Define the cycle duration to be the COSMAC VIP original instruction timing
+            // (in cycles) running at the specified processor speed
+            execution_duration = Duration::from_micros(
+                cosmac_cycles * COSMAC_VIP_MACHINE_CYCLES_PER_CYCLE * 1_000_000_u64
+                    / self.processor_speed_hertz,
+            );
+        } else {
+            // Drive the cycle duration purely from specified processor speed
+            execution_duration = Duration::from_micros(1_000_000_u64 / self.processor_speed_hertz);
+        }
+        execution_duration
     }
 
     /// Checks if the required time has passed since the timers were last decremented
@@ -318,14 +364,15 @@ impl Processor {
         }
     }
 
-    /// Executes the passed Instruction.  Returns [Error::UnimplementedInstruction] if Chipolata is
+    /// Executes the passed Instruction.  Returns [ErrorDetail::UnimplementedInstruction] if Chipolata is
     /// unable to process opcodes of this type.
     ///
     /// # Arguments
     ///
     /// * `instr` - the instruction to be executed
-    fn execute(&mut self, instr: Instruction) -> Result<(), Error> {
+    fn execute(&mut self, instr: Instruction) -> Result<u64, ErrorDetail> {
         match instr {
+            Instruction::Op004B => self.execute_004B(),
             Instruction::Op00E0 => self.execute_00E0(),
             Instruction::Op00EE => self.execute_00EE(),
             Instruction::Op0NNN { nnn } => self.execute_0NNN(nnn),
@@ -362,511 +409,5 @@ impl Processor {
             Instruction::OpFX55 { x } => self.execute_FX55(x),
             Instruction::OpFX65 { x } => self.execute_FX65(x),
         }
-    }
-
-    /// Executes the 00E0 instruction - CLS
-    /// Purpose: clear the display
-    fn execute_00E0(&mut self) -> Result<(), Error> {
-        Ok(self.frame_buffer.clear())
-    }
-
-    /// Executes the 00EE instruction - RET
-    /// Purpose: return from a subroutine
-    fn execute_00EE(&mut self) -> Result<(), Error> {
-        let address: u16 = self.stack.pop()?; // pop the top address off the stack
-        Ok(self.program_counter = address) // assign this address to the program counter
-    }
-
-    /// Executes the 0NNN instruction - SYS addr
-    /// Purpose: jump to a machine code routine at NNN
-    fn execute_0NNN(&mut self, _nnn: u16) -> Result<(), Error> {
-        Err(Error::UnimplementedInstruction)
-    }
-
-    /// Executes the 1NNN instruction - JP addr
-    /// Purpose: jump to location NNN
-    fn execute_1NNN(&mut self, nnn: u16) -> Result<(), Error> {
-        Ok(self.program_counter = nnn) // set the program counter to address NNN
-    }
-
-    /// Executes the 2NNN instruction - CALL addr
-    /// Purpose: call subroutine at NNN
-    fn execute_2NNN(&mut self, nnn: u16) -> Result<(), Error> {
-        self.stack.push(self.program_counter)?; // push current program location to stack
-        Ok(self.program_counter = nnn) // set the program counter to address NNN
-    }
-
-    /// Executes the 3XNN instruction - SE Vx, byte
-    /// Purpose: skip next instruction if Vx = NN
-    fn execute_3XNN(&mut self, x: usize, nn: u8) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Compare the value in register Vx to passed value NN
-        if self.variable_registers[x] == nn {
-            // If they are equal, increment the program counter by 2 bytes (1 opcode)
-            self.program_counter += 2;
-        }
-        Ok(())
-    }
-
-    /// Executes the 4XNN instruction - SNE Vx, byte
-    /// Purpose: skip next instruction if Vx != NN
-    fn execute_4XNN(&mut self, x: usize, nn: u8) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Compare the value in register Vx to passed value NN
-        if self.variable_registers[x] != nn {
-            // If they are not equal, increment the program counter by 2 bytes (1 opcode)
-            self.program_counter += 2;
-        }
-        Ok(())
-    }
-
-    /// Executes the 5XY0 instruction - SE Vx, Vy
-    /// Purpose: skip next instruction if Vx = Vy
-    fn execute_5XY0(&mut self, x: usize, y: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Compare the value in registers Vx and Vy
-        if self.variable_registers[x] == self.variable_registers[y] {
-            // If they are equal, increment the program counter by 2 bytes (1 opcode)
-            self.program_counter += 2;
-        }
-        Ok(())
-    }
-
-    /// Executes the 6XNN instruction - LD Vx, byte
-    /// Purpose: set Vx = NN
-    fn execute_6XNN(&mut self, x: usize, nn: u8) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        Ok(self.variable_registers[x] = nn) // Set Vx = NN
-    }
-
-    /// Executes the 7XNN instruction - ADD Vx, byte
-    /// Purpose: set Vx = Vx + NN
-    fn execute_7XNN(&mut self, x: usize, nn: u8) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Set Vx equal to itself plus NN
-        Ok(self.variable_registers[x] =
-            (((self.variable_registers[x] as u16) + (nn as u16)) & 0xFF) as u8)
-    }
-
-    /// Executes the 8XY0 instruction - LD Vx, Vy
-    /// Purpose: set Vx = Vy
-    fn execute_8XY0(&mut self, x: usize, y: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        Ok(self.variable_registers[x] = self.variable_registers[y]) // set Vx = Vy
-    }
-
-    /// Executes the 8XY1 instruction - OR Vx, Vy
-    /// Purpose: set Vx = Vx | Vy (bitwise OR)
-    fn execute_8XY1(&mut self, x: usize, y: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Set Vx = Vx | Vy
-        Ok(self.variable_registers[x] = self.variable_registers[x] | self.variable_registers[y])
-    }
-
-    /// Executes the 8XY2 instruction - AND Vx, Vy
-    /// Purpose: set Vx = Vx & Vy (bitwise AND)
-    fn execute_8XY2(&mut self, x: usize, y: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Set Vx = Vx & Vy
-        Ok(self.variable_registers[x] = self.variable_registers[x] & self.variable_registers[y])
-    }
-
-    /// Executes the 8XY3 instruction - XOR Vx, Vy
-    /// Purpose: set Vx = Vx ^ Vy (bitwise XOR)
-    fn execute_8XY3(&mut self, x: usize, y: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Set Vx = Vx ^ Vy
-        Ok(self.variable_registers[x] = self.variable_registers[x] ^ self.variable_registers[y])
-    }
-
-    /// Executes the 8XY4 instruction - ADD Vx, Vy
-    /// Purpose: set Vx = Vx + Vy, set Vf = carry
-    fn execute_8XY4(&mut self, x: usize, y: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Cast Vx and Vy as u16 (to allow overflow beyond u8 range), add, and store in temp variable
-        let result: u16 = (self.variable_registers[x] as u16) + (self.variable_registers[y] as u16);
-        // Check whether sum has overflowed beyond 8 bits; if so set Vf to 1 otherwise 0
-        self.variable_registers[0xF] = match result > 0xFF {
-            true => 1,
-            false => 0,
-        };
-        Ok(self.variable_registers[x] = (result & 0xFF) as u8) // Save the low 8 bits of result to Vx
-    }
-
-    /// Executes the 8XY5 instruction - SUB Vx, Vy
-    /// Purpose: set Vx = Vx - Vy, set Vf = NOT borrow
-    fn execute_8XY5(&mut self, x: usize, y: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Cast Vx and Vy as i16 (to allow signed result), subtract, and store in temp variable
-        let result: i16 = (self.variable_registers[x] as i16) - (self.variable_registers[y] as i16);
-        // Check whether subtraction result is negative; if so set Vf to 0 otherwise 1
-        self.variable_registers[0xF] = match result < 0x0 {
-            true => 0,
-            false => 1,
-        };
-        Ok(self.variable_registers[x] = (result & 0xFF) as u8) // Save the low 8 bits of result to Vx
-    }
-
-    /// Executes the 8XY6 instruction - SHR Vx {, Vy}
-    /// Purpose: [CHIP-8] set Vx = Vy SHR 1, where SHR means bit-shift right
-    ///          [CHIP-48 / SUPER-CHIP 1.1] set Vx = Vx SHR 1    
-    fn execute_8XY6(&mut self, x: usize, y: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        match self.emulation_level {
-            // CHIP-8 first sets Vx to Vy
-            EmulationLevel::Chip8 => self.variable_registers[x] = self.variable_registers[y],
-            // CHIP-48 and SUPER-CHIP 1.1 ignore Vy
-            EmulationLevel::Chip48 | EmulationLevel::SuperChip11 => {}
-        }
-        // Check if least significant bit of Vx is 1; if so set Vf to 1 otherwise 0
-        self.variable_registers[0xF] = match self.variable_registers[x] & 0x01 == 0x01 {
-            true => 1,
-            false => 0,
-        };
-        // Bitshift the value in Vx right by one bit (i.e. divide Vx by 2) then re-assign to Vx
-        Ok(self.variable_registers[x] = self.variable_registers[x] >> 1)
-    }
-
-    /// Executes the 8XY7 instruction - SUBN Vx, Vy
-    /// Purpose: set Vx = Vy - Vx, set Vf = NOT borrow
-    fn execute_8XY7(&mut self, x: usize, y: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Cast Vx and Vy as i16 (to allow signed result), subtract, and store in temp variable
-        let result: i16 = (self.variable_registers[y] as i16) - (self.variable_registers[x] as i16);
-        // Check whether subtraction result is negative; if so set Vf to 0 otherwise 1
-        self.variable_registers[0xF] = match result < 0x0 {
-            true => 0,
-            false => 1,
-        };
-        Ok(self.variable_registers[x] = (result & 0xFF) as u8) // Save the low 8 bits of result to Vx
-    }
-
-    /// Executes the 8XYE instruction - SHL Vx {, Vy}    
-    /// Purpose: [CHIP-8] set Vx = Vy SHL 1, where SHL means bit-shift left
-    ///          [CHIP-48 / SUPER-CHIP 1.1] set Vx = Vx SHL 1  
-    fn execute_8XYE(&mut self, x: usize, y: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        match self.emulation_level {
-            // CHIP-8 first sets Vx to Vy
-            EmulationLevel::Chip8 => self.variable_registers[x] = self.variable_registers[y],
-            // CHIP-48 and SUPER-CHIP 1.1 ignore Vy
-            EmulationLevel::Chip48 | EmulationLevel::SuperChip11 => {}
-        }
-        // Check if most significant bit of Vx is 1; if so set Vf to 1 otherwise 0
-        self.variable_registers[0xF] = match self.variable_registers[x] & 0x80 == 0x80 {
-            true => 1,
-            false => 0,
-        };
-        // Bitshift the value in Vx left by one bit (i.e. multiply Vx by 2) then assign to Vx
-        Ok(self.variable_registers[x] = self.variable_registers[x] << 1)
-    }
-
-    /// Executes the 9XY0 instruction - SNE Vx, Vy
-    /// Purpose: skip next instruction if Vx != Vy
-    fn execute_9XY0(&mut self, x: usize, y: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        } else if self.variable_registers[x] != self.variable_registers[y] {
-            // Compare the value in registers Vx and Vy.  If they are not equal, increment the
-            // program counter by 2 bytes (1 opcode)
-            self.program_counter += 2;
-        }
-        Ok(())
-    }
-
-    /// Executes the ANNN instruction - LD I, addr
-    /// Purpose: set I = NNN
-    fn execute_ANNN(&mut self, nnn: u16) -> Result<(), Error> {
-        Ok(self.index_register = nnn) // set the index register to address NNN
-    }
-
-    /// Executes the BNNN instruction - JP V0, addr
-    /// Purpose: [CHIP-8] jump to location NNN + V0
-    ///          [CHIP-48 / SUPER-CHIP 1.1] jump to location xNN + Vx   
-    fn execute_BNNN(&mut self, nnn: u16) -> Result<(), Error> {
-        match self.emulation_level {
-            EmulationLevel::Chip8 => {
-                // Set the program counter to NNN plus the value in register V0
-                Ok(self.program_counter = nnn + (self.variable_registers[0] as u16))
-            }
-            EmulationLevel::Chip48 | EmulationLevel::SuperChip11 => {
-                // isolate the first hex digit
-                let x: u16 = (nnn & 0x0F00) >> 8;
-                // Set the program counter to XNN plus the value in register VX
-                Ok(self.program_counter = nnn + (self.variable_registers[x as usize] as u16))
-            }
-        }
-    }
-
-    /// Executes the CXNN instruction - RND Vx, byte
-    /// Purpose: set Vx = random byte & NN (bitwise AND)
-    fn execute_CXNN(&mut self, x: usize, nn: u8) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Generate a random u8 value and store in temp variable
-        let mut rng = rand::thread_rng();
-        let rand: u8 = rng.gen();
-        // Set Vx = bitwise AND of value NN and random value
-        Ok(self.variable_registers[x] = nn & rand)
-    }
-
-    /// Executes the DXYN instruction - DRW Vx, Vy, nibble
-    /// Purpose: display the N-byte sprite starting at memory location I at display
-    /// coordinate (Vx, Vy), set Vf = collision
-    fn execute_DXYN(&mut self, x: usize, y: usize, n: u8) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT || n > MAX_SPRITE_HEIGHT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Read the sprite to draw as an N-byte array slice at memory location
-        // pointed to by the index register
-        let sprite: &[u8] = self
-            .memory
-            .read_bytes(self.index_register as usize, n as usize)?;
-        // Call into the Chipolata display to draw this sprite at location (Vx, Vy),
-        // storing the result (i.e. whether collision occured) in a temp variable
-        let any_pixel_turned_off: bool = self.frame_buffer.draw_sprite(
-            self.variable_registers[x] as usize,
-            self.variable_registers[y] as usize,
-            sprite,
-        )?;
-        // Set Vf to 1 or 0 if collision did or did not occur, respectively
-        self.variable_registers[0xF] = match any_pixel_turned_off {
-            true => 0x1,
-            false => 0x0,
-        };
-        Ok(())
-    }
-
-    /// Executes the EX9E instruction - SKP Vx
-    /// Purpose: skip next instruction if the key with value Vx is pressed
-    fn execute_EX9E(&mut self, x: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        let key: u8 = self.variable_registers[x]; // get the value stored in Vx
-                                                  // Check whether the current keystate indicates the corresponding key is pressed
-        let key_pressed: bool = self.keystate.is_key_pressed(key)?;
-        if key_pressed {
-            // If so, increment the program counter by 2 bytes (1 opcode)
-            self.program_counter += 2;
-            self.set_key_status(key, false)?; // Set key status to unpressed to prevent immediate repeats
-        }
-        Ok(())
-    }
-
-    /// Executes the EXA1 instruction - SKNP Vx
-    /// Purpose: skip next instruction if the key with value Vx is not pressed
-    fn execute_EXA1(&mut self, x: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        let key: u8 = self.variable_registers[x]; // get the value stored in Vx
-                                                  // Check whether the current keystate indicates the corresponding key is pressed
-        let key_pressed: bool = self.keystate.is_key_pressed(key)?;
-        if !key_pressed {
-            // If not, increment the program counter by 2 bytes (1 opcode)
-            self.program_counter += 2;
-        } else {
-            self.set_key_status(key, false)?; // Set key status to unpressed to prevent immediate repeats
-        }
-        Ok(())
-    }
-
-    /// Executes the FX07 instruction - LD Vx, DT
-    /// Purpose: set Vx = delay timer value
-    fn execute_FX07(&mut self, x: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        Ok(self.variable_registers[x] = self.delay_timer) // set Vx = delay timer value
-    }
-
-    /// Executes the FX0A instruction - LD Vx, K
-    /// Purpose: wait for a key press, store the key value in Vx
-    fn execute_FX0A(&mut self, x: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Check whether any keys are currently pressed
-        match self.keystate.get_keys_pressed() {
-            Some(keys_pressed) => {
-                // Store the (first) pressed key value in Vx
-                self.variable_registers[x] = keys_pressed[0];
-                self.status = ProcessorStatus::Running; // ensure processor state is "Running"
-                Ok(())
-            }
-            None => {
-                // Decrement the program counter by by 2 bytes (1 opcode)
-                // i.e. keep repeating this instruction until a key press occurs
-                self.program_counter -= 2;
-                // Set processor state to "Waiting"
-                self.status = ProcessorStatus::WaitingForKeypress;
-                Ok(())
-            }
-        }
-    }
-
-    /// Executes the FX15 instruction - LD DT, Vx
-    /// Purpose: set delay timer = Vx
-    fn execute_FX15(&mut self, x: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        Ok(self.delay_timer = self.variable_registers[x]) // set delay timer = Vx
-    }
-
-    /// Executes the FX18 instruction - LD ST, Vx
-    /// Purpose: set sound timer = Vx
-    fn execute_FX18(&mut self, x: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        Ok(self.sound_timer = self.variable_registers[x]) // set sound timer = Vx
-    }
-
-    /// Executes the FX1E instruction - ADD I, Vx
-    /// Purpose: set I = I + Vx.  Set Vf to 1 if result outside addressable memory
-    fn execute_FX1E(&mut self, x: usize) -> Result<(), Error> {
-        if x < VARIABLE_REGISTER_COUNT {
-            // Cast Vx and I as u32 (to allow overflow beyond u16 range), add, and store in temp variable
-            let result: u32 = (self.index_register as u32) + (self.variable_registers[x] as u32);
-            if result <= 0xFFFF {
-                // if result is outside u16 range then fall through to return error
-                // Check if result is outside addressable memory space and set Vf to 1 if so, 0 otherwise
-                self.variable_registers[0xF] =
-                    match result <= (self.memory.max_addressable_size() as u32) {
-                        true => 0,
-                        false => 1,
-                    };
-                return Ok(self.index_register = result as u16);
-            }
-        }
-        return Err(Error::OperandsOutOfBounds);
-    }
-
-    /// Executes the FX29 instruction - LD F, Vx
-    /// Purpose: set I = location of font sprite for digit Vx
-    fn execute_FX29(&mut self, x: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Fetch the character hex code in Vx and check it is within expected bounds
-        let character = self.variable_registers[x];
-        if character > FONT_SPRITE_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        // Calculate the corresponding font sprite location in memory based on the size per font
-        // character (in bytes), the starting location of font data in memory, and the offset of
-        // the requested character's ordinal within the range of font characters
-        let character_memory_location: usize =
-            (character as usize) * self.font.char_size() + self.font_start_address;
-        Ok(self.index_register = character_memory_location as u16) // set index register to this address
-    }
-
-    /// Executes the FX33 instruction - LD V, Vx
-    /// Purpose: converts value in Vx to decimal, and stores the digits in memory locations I, I+1 and I+2
-    fn execute_FX33(&mut self, x: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        let hex_number: u8 = self.variable_registers[x]; // get the hex value in Vx
-        let decimal_first_digit: u8 = hex_number / 100; // get the "hundreds" decimal digit
-        let decimal_second_digit: u8 = (hex_number % 100) / 10; // get the "tens" decimal digit
-        let decimal_third_digit: u8 = hex_number % 10; // get the "units" decimal digit
-        let index: usize = self.index_register as usize; // get the memory address in the index register
-        self.memory.write_byte(index, decimal_first_digit)?; // store the first digit at this address
-        self.memory.write_byte(index + 1, decimal_second_digit)?; // store the second digit at the next address
-        self.memory.write_byte(index + 2, decimal_third_digit)?; // store the third digit at the next address
-        Ok(())
-    }
-
-    /// Executes the FX55 instruction - LD [I], Vx
-    /// Purpose: store registers V0 to Vx in memory starting at the address in the index register    
-    ///          [CHIP-8] also set I to I + x + 1
-    ///          [CHIP-48] also set I to I + x
-    ///          [SUPER-CHIP 1.1] do not modify I    
-    fn execute_FX55(&mut self, x: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        let original_index_register: usize = self.index_register as usize;
-        match self.emulation_level {
-            EmulationLevel::Chip8 => {
-                // Original CHIP-8 behaviour incremented index register after each assignment
-                self.index_register = (original_index_register + x + 1) as u16;
-            }
-            EmulationLevel::Chip48 => {
-                // CHIP-48 increments index register by one less than it should
-                self.index_register = (original_index_register + x) as u16;
-            }
-            EmulationLevel::SuperChip11 => {
-                // SUPER-CHIP 1.1 does not increment the index register at all; do nothing here
-            }
-        }
-        // Construct an appropriate array slice from the variable register array and write to memory
-        Ok(self
-            .memory
-            .write_bytes(original_index_register, &self.variable_registers[0..x + 1])?)
-    }
-
-    /// Executes the FX65 instruction - LD Vx, [I]
-    /// Purpose: populate registers V0 to Vx from memory starting at the address in the index register
-    ///          [CHIP-8] also set I to I + x + 1
-    ///          [CHIP-48] also set I to I + x
-    ///          [SUPER-CHIP 1.1] do not modify I
-    fn execute_FX65(&mut self, x: usize) -> Result<(), Error> {
-        if x >= VARIABLE_REGISTER_COUNT {
-            return Err(Error::OperandsOutOfBounds);
-        }
-        let original_index_register: usize = self.index_register as usize;
-        match self.emulation_level {
-            EmulationLevel::Chip8 => {
-                // Original CHIP-8 behaviour incremented index register after each assignment
-                self.index_register = (original_index_register + x + 1) as u16;
-            }
-            EmulationLevel::Chip48 => {
-                // CHIP-48 increments index register by one less than it should
-                self.index_register = (original_index_register + x) as u16;
-            }
-            EmulationLevel::SuperChip11 => {
-                // SUPER-CHIP 1.1 does not increment the index register at all; do nothing here
-            }
-        }
-        // Iterate through the appropriate portion of the variable register array
-        for i in 0..(x + 1) {
-            // Set the new value by reading the appropriate byte from memory
-            self.variable_registers[i] =
-                self.memory.read_byte(original_index_register + i).unwrap();
-        }
-        Ok(())
     }
 }

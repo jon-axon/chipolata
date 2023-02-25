@@ -1,8 +1,9 @@
-use crate::error::Error;
+use crate::error::ErrorDetail;
 
 /// An enum with a variant for each instruction within the CHIP-8 instruction set.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Instruction {
+    Op004B,                               // Turn on COSMAC VIP display
     Op00E0,                               // Clear screen
     Op00EE,                               // Subroutine (call)
     Op0NNN { nnn: u16 },                  // Execute machine language routine
@@ -42,13 +43,13 @@ pub(crate) enum Instruction {
 
 impl Instruction {
     /// Constructor/builder method that parses the supplied two-byte opcode and returns the
-    /// corresponding [Instruction] enum variant.  Returns [Error::UnknownInstruction] if
+    /// corresponding [Instruction] enum variant.  Returns [ErrorDetail::UnknownInstruction] if
     /// the opcode cannot be parsed or recognised.
     ///
     /// # Arguments
     ///
     /// * `opcode` - a (big-endian) two-byte representation of the opcode to be parsed
-    pub(crate) fn decode_from(opcode: u16) -> Result<Instruction, Error> {
+    pub(crate) fn decode_from(opcode: u16) -> Result<Instruction, ErrorDetail> {
         // Divide the 16-bit opcode into four 4-bit nibbles, using bit shifting and masking
         let first_nibble: u16 = opcode >> 12;
         let second_nibble: u16 = (opcode & 0x0F00) >> 8;
@@ -57,6 +58,7 @@ impl Instruction {
         // Pattern match on the nibbles as appropriate to identify the opcode and return
         // the corresponding enum variant
         match (first_nibble, second_nibble, third_nibble, fourth_nibble) {
+            (0x0, 0x0, 0x4, 0xB) => Ok(Instruction::Op004B),
             (0x0, 0x0, 0xE, 0x0) => Ok(Instruction::Op00E0),
             (0x0, 0x0, 0xE, 0xE) => Ok(Instruction::Op00EE),
             (0x0, ..) => Ok(Instruction::Op0NNN {
@@ -178,7 +180,7 @@ impl Instruction {
             }),
             // If we have not matched by this point then we cannot identify the
             // instruction; return an Error
-            _ => Err(Error::UnknownInstruction),
+            _ => Err(ErrorDetail::UnknownInstruction { opcode }),
         }
     }
 
@@ -186,6 +188,7 @@ impl Instruction {
     #[allow(dead_code)]
     pub(crate) fn name(&self) -> &str {
         match self {
+            Instruction::Op004B => "004B",
             Instruction::Op00E0 => "00E0",
             Instruction::Op00EE => "00EE",
             Instruction::Op0NNN { .. } => "0NNN",
@@ -229,6 +232,14 @@ impl Instruction {
 mod tests {
     #![allow(non_snake_case)]
     use super::*;
+
+    #[test]
+    fn test_decode_004B() {
+        assert_eq!(
+            Instruction::decode_from(0x004B).unwrap(),
+            Instruction::Op004B
+        );
+    }
 
     #[test]
     fn test_decode_00E0() {
@@ -518,7 +529,7 @@ mod tests {
     fn test_decode_unrecognised_opcode() {
         assert_eq!(
             Instruction::decode_from(0xFFFF).unwrap_err(),
-            Error::UnknownInstruction
+            ErrorDetail::UnknownInstruction { opcode: 0xFFFF }
         );
     }
 }

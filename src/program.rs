@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::ErrorDetail;
 
 /// An abstraction of a CHIP-8 ROM, ready for loading into the Chipolata emulator.
 pub struct Program {
@@ -26,7 +26,7 @@ impl Program {
     /// # Arguments
     ///
     /// * `data` - the byte vector containing the program data to use
-    pub fn set_program_data(&mut self, data: Vec<u8>) -> Result<(), Error> {
+    pub fn set_program_data(&mut self, data: Vec<u8>) -> Result<(), ErrorDetail> {
         self.program_data = data;
         Ok(())
     }
