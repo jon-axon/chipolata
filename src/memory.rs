@@ -32,6 +32,7 @@ impl Memory {
             address_limit: match emulation_level {
                 EmulationLevel::Chip8 {
                     memory_limit_2k: true,
+                    variable_cycle_timing: _,
                 } => CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES,
                 EmulationLevel::Chip8 { .. } => CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES,
                 EmulationLevel::Chip48 => CHIP48_ADDRESSABLE_MEMORY_BYTES,
@@ -157,6 +158,7 @@ mod tests {
     fn test_read_byte() {
         let mut memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         memory.bytes[0x3] = 0xF2;
         assert_eq!(memory.read_byte(0x3).unwrap(), 0xF2);
@@ -166,6 +168,7 @@ mod tests {
     fn test_read_byte_out_of_bounds_chip8_small_error() {
         let memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: true,
+            variable_cycle_timing: false,
         });
         assert_eq!(
             memory
@@ -181,6 +184,7 @@ mod tests {
     fn test_read_byte_out_of_bounds_chip8_large_error() {
         let memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         assert_eq!(
             memory
@@ -222,6 +226,7 @@ mod tests {
     fn test_read_two_bytes() {
         let mut memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         memory.bytes[0x3] = 0xF2;
         memory.bytes[0x4] = 0x1C;
@@ -232,6 +237,7 @@ mod tests {
     fn test_read_two_bytes_out_of_bounds_chip8_small_error() {
         let memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: true,
+            variable_cycle_timing: false,
         });
         assert_eq!(
             memory
@@ -247,6 +253,7 @@ mod tests {
     fn test_read_two_bytes_out_of_bounds_chip8_large_error() {
         let memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         assert_eq!(
             memory
@@ -262,6 +269,7 @@ mod tests {
     fn test_write_byte() {
         let mut memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         assert!(memory.write_byte(0x3, 0xF2).is_ok() && memory.bytes[0x3] == 0xF2);
     }
@@ -270,6 +278,7 @@ mod tests {
     fn test_write_byte_out_of_bounds_chip8_small_error() {
         let mut memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: true,
+            variable_cycle_timing: false,
         });
         assert_eq!(
             memory
@@ -285,6 +294,7 @@ mod tests {
     fn test_write_byte_out_of_bounds_chip8_large_error() {
         let mut memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         assert_eq!(
             memory
@@ -300,6 +310,7 @@ mod tests {
     fn test_read_bytes() {
         let mut memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         memory.bytes[0x3] = 0xF2;
         memory.bytes[0x4] = 0x18;
@@ -312,6 +323,7 @@ mod tests {
     fn test_read_bytes_out_of_bounds_chip8_small_error() {
         let memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: true,
+            variable_cycle_timing: false,
         });
         assert_eq!(
             memory
@@ -327,6 +339,7 @@ mod tests {
     fn test_read_bytes_out_of_bounds_chip8_large_error() {
         let memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         assert_eq!(
             memory
@@ -342,6 +355,7 @@ mod tests {
     fn test_write_bytes() {
         let mut memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         let bytes_to_write: [u8; 3] = [0xF2, 0x18, 0xCC];
         memory.write_bytes(0x3, &bytes_to_write).unwrap();
@@ -354,6 +368,7 @@ mod tests {
     fn test_write_bytes_out_of_bounds_chip8_small_error() {
         let mut memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: true,
+            variable_cycle_timing: false,
         });
         let bytes_to_write: [u8; 2] = [0xF2, 0x18];
         assert_eq!(
@@ -370,6 +385,7 @@ mod tests {
     fn test_write_bytes_out_of_bounds_chip8_large_error() {
         let mut memory = Memory::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         let bytes_to_write: [u8; 2] = [0xF2, 0x18];
         assert_eq!(

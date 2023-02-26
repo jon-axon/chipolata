@@ -36,7 +36,11 @@ const COSMAC_VIP_MACHINE_CYCLES_PER_CYCLE: u64 = 8;
 #[derive(Copy, Clone)]
 pub enum EmulationLevel {
     /// The original CHIP-8 interpreter for the RCA COSMAC VIP, optionally limited to 2k RAM
-    Chip8 { memory_limit_2k: bool },
+    /// and optionally set to simulate original COSMAC VIP cycles-per-instruction timings
+    Chip8 {
+        memory_limit_2k: bool,
+        variable_cycle_timing: bool,
+    },
     /// Re-implemented CHIP-8 interpreter for the HP48 graphing calculators
     Chip48,
     /// Version 1.1 of the SUPER-CHIP interpreter for HP48S and HP48SX graphing calculators
@@ -119,7 +123,6 @@ pub struct Processor {
     font_start_address: usize, // The start address in memory at which the font is loaded
     program_start_address: usize, // The start address in memory at which the program is loaded
     processor_speed_hertz: u64, // Used to calculate the time between execute cycles
-    use_variable_cycle_timings: bool, // If true, use original COSMAC VIP cycle timings by opcode
     emulation_level: EmulationLevel, // Component and instruction-compatibility configuration
 }
 
@@ -151,7 +154,6 @@ impl Processor {
             font_start_address: options.font_start_address as usize,
             program_start_address: options.program_start_address as usize,
             processor_speed_hertz: options.processor_speed_hertz,
-            use_variable_cycle_timings: options.use_variable_cycle_timings,
             emulation_level: options.emulation_level,
         };
         if let Err(e) = processor.load_font_data() {
@@ -321,7 +323,11 @@ impl Processor {
     /// ignored by the function.
     fn calculate_cycle_duration(&self, cosmac_cycles: u64) -> Duration {
         let execution_duration: Duration;
-        if self.use_variable_cycle_timings {
+        if let EmulationLevel::Chip8 {
+            memory_limit_2k: _,
+            variable_cycle_timing: true,
+        } = self.emulation_level
+        {
             // Define the cycle duration to be the COSMAC VIP original instruction timing
             // (in cycles) running at the specified processor speed
             execution_duration = Duration::from_micros(

@@ -37,9 +37,9 @@ impl ChipolataApp {
         options.processor_speed_hertz = 2500;
         options.emulation_level = EmulationLevel::SuperChip11;
         // options.processor_speed_hertz = COSMAC_VIP_PROCESSOR_SPEED_HERTZ;
-        // options.use_variable_cycle_timings = true;
         // options.emulation_level = EmulationLevel::Chip8 {
         //     memory_limit_2k: false,
+        //     variable_cycle_timing: true,
         // };
         let mut processor = Processor::initialise_and_load(program, options).unwrap();
         let (proc_input_tx, proc_input_rx) = mpsc::channel();
@@ -50,21 +50,15 @@ impl ChipolataApp {
             proc_output_rx: proc_output_rx,
             proc_ready_tx: proc_ready_tx,
         };
-        thread::spawn(move || {
-            //let mut time = std::time::Instant::now();
-            loop {
-                //if time.elapsed() >= std::time::Duration::from_micros(400) {
-                //time = std::time::Instant::now();
-                for (received, pressed) in proc_input_rx.try_iter() {
-                    processor.set_key_status(received, pressed).unwrap();
-                }
-                processor.execute_cycle().unwrap();
-                if proc_ready_rx.try_recv().is_ok() {
-                    proc_output_tx
-                        .send(processor.export_state_snapshot(StateSnapshotVerbosity::Minimal))
-                        .unwrap();
-                }
-                //}
+        thread::spawn(move || loop {
+            for (received, pressed) in proc_input_rx.try_iter() {
+                processor.set_key_status(received, pressed).unwrap();
+            }
+            processor.execute_cycle().unwrap();
+            if proc_ready_rx.try_recv().is_ok() {
+                proc_output_tx
+                    .send(processor.export_state_snapshot(StateSnapshotVerbosity::Minimal))
+                    .unwrap();
             }
         });
         app

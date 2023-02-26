@@ -2,12 +2,18 @@ use super::*;
 use crate::{program::Program, COSMAC_VIP_PROCESSOR_SPEED_HERTZ};
 use std::time::{Duration, Instant};
 
+fn get_variable_timing_options() -> Options {
+    Options::new(
+        COSMAC_VIP_PROCESSOR_SPEED_HERTZ,
+        EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+            variable_cycle_timing: true,
+        },
+    )
+}
 fn setup_test_processor_variable_timing() -> Processor {
     let program: Program = Program::default();
-    let mut options: Options = Options::default();
-    options.processor_speed_hertz = crate::COSMAC_VIP_PROCESSOR_SPEED_HERTZ;
-    options.use_variable_cycle_timings = true;
-    Processor::initialise_and_load(program, options).unwrap()
+    Processor::initialise_and_load(program, get_variable_timing_options()).unwrap()
 }
 
 fn setup_test_processor_fixed_timing() -> Processor {
@@ -44,10 +50,8 @@ fn test_processor_speed_variable() {
     let tolerance_percent: u64 = 2; // permitted difference between specified and calculated
     let program_data: Vec<u8> = vec![0xF0, 0x0A];
     let program: Program = Program::new(program_data);
-    let mut options: Options = Options::default();
-    options.processor_speed_hertz = COSMAC_VIP_PROCESSOR_SPEED_HERTZ;
-    options.use_variable_cycle_timings = true;
-    let mut processor = Processor::initialise_and_load(program, options).unwrap();
+    let mut processor =
+        Processor::initialise_and_load(program, get_variable_timing_options()).unwrap();
     let start_time: Instant = Instant::now();
     let iterations: usize = 25;
     for _ in 0..iterations {

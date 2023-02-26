@@ -76,6 +76,7 @@ mod tests {
     fn test_pop() {
         let mut stack: Stack = Stack::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         stack.bytes[0] = 0xC4;
         stack.pointer = 1;
@@ -86,6 +87,7 @@ mod tests {
     fn test_pop_empty_error() {
         let mut stack: Stack = Stack::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         assert_eq!(stack.pop().unwrap_err(), ErrorDetail::PopEmptyStack);
     }
@@ -94,6 +96,7 @@ mod tests {
     fn test_push() {
         let mut stack: Stack = Stack::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         stack.bytes[0] = 0xC4;
         stack.pointer = 1;
@@ -104,6 +107,7 @@ mod tests {
     fn test_push_full_chip8_mode_error() {
         let mut stack: Stack = Stack::new(EmulationLevel::Chip8 {
             memory_limit_2k: false,
+            variable_cycle_timing: false,
         });
         stack.pointer = CHIP8_STACK_DEPTH;
         assert_eq!(stack.push(0xFF).unwrap_err(), ErrorDetail::PushFullStack);
