@@ -8,6 +8,13 @@ impl Processor {
         Err(ErrorDetail::UnimplementedInstruction { opcode: 0x004B })
     }
 
+    /// Executes the 00CN instruction - SCD nibble
+    /// Purpose: [SUPER-CHIP 1.1] scroll display N pixels down (N/2 in low-resolution mode)
+    ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
+    pub(super) fn execute_00CN(&mut self, n: u8) -> Result<u64, ErrorDetail> {
+        todo!()
+    }
+
     /// Executes the 00E0 instruction - CLS
     /// Purpose: clear the display
     pub(super) fn execute_00E0(&mut self) -> Result<u64, ErrorDetail> {
@@ -23,6 +30,65 @@ impl Processor {
         let address: u16 = self.stack.pop()?;
         self.program_counter = address;
         Ok(CYCLES)
+    }
+
+    /// Executes the 00FB instruction - SCR
+    /// Purpose: [SUPER-CHIP 1.1] scroll right by 4 pixels (2 in low-resolution mode)
+    ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
+    pub(super) fn execute_00FB(&mut self) -> Result<u64, ErrorDetail> {
+        todo!()
+    }
+
+    /// Executes the 00FC instruction - SCL
+    /// Purpose: [SUPER-CHIP 1.1] scroll left by 4 pixels (2 in low-resolution mode)
+    ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
+    pub(super) fn execute_00FC(&mut self) -> Result<u64, ErrorDetail> {
+        todo!()
+    }
+
+    /// Executes the 00FD instruction - EXIT
+    /// Purpose: [SUPER-CHIP 1.1] exit the interpreter (set status to [ProcessorStatus::Complete])
+    ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
+    pub(super) fn execute_00FD(&mut self) -> Result<u64, ErrorDetail> {
+        match self.emulation_level {
+            EmulationLevel::SuperChip11 => {
+                self.status = ProcessorStatus::Completed;
+                Ok(0)
+            }
+            EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
+                Err(ErrorDetail::UnknownInstruction { opcode: 0x00FD })
+            }
+        }
+    }
+
+    /// Executes the 00FE instruction - LOW
+    /// Purpose: [SUPER-CHIP 1.1] disable high-resolution mode
+    ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
+    pub(super) fn execute_00FE(&mut self) -> Result<u64, ErrorDetail> {
+        match self.emulation_level {
+            EmulationLevel::SuperChip11 => {
+                self.high_resolution_mode = false;
+                Ok(0)
+            }
+            EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
+                Err(ErrorDetail::UnknownInstruction { opcode: 0x00FE })
+            }
+        }
+    }
+
+    /// Executes the 00FF instruction - HIGH
+    /// Purpose: [SUPER-CHIP 1.1] enable high-resolution mode
+    ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
+    pub(super) fn execute_00FF(&mut self) -> Result<u64, ErrorDetail> {
+        match self.emulation_level {
+            EmulationLevel::SuperChip11 => {
+                self.high_resolution_mode = true;
+                Ok(0)
+            }
+            EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
+                Err(ErrorDetail::UnknownInstruction { opcode: 0x00FF })
+            }
+        }
     }
 
     /// Executes the 0NNN instruction - SYS addr
@@ -392,8 +458,24 @@ impl Processor {
 
     /// Executes the DXYN instruction - DRW Vx, Vy, nibble
     /// Purpose: display the N-byte sprite starting at memory location I at display
-    /// coordinate (Vx, Vy), set Vf = collision
+    /// coordinate (Vx, Vy)
+    ///          [CHIP-8 / CHIP-48] set Vf = 1 if collision
+    ///          [SUPER-CHIP 1.1] separate implementation for higher resolution mode,
+    ///                           also set Vf = n where n is rows that collide or clip screen bottom
     pub(super) fn execute_DXYN(&mut self, x: usize, y: usize, n: u8) -> Result<u64, ErrorDetail> {
+        match self.emulation_level {
+            EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
+                self.execute_DXYN_chip8(x, y, n) // delegate to CHIP-8/48-specific method
+            }
+            EmulationLevel::SuperChip11 => {
+                self.execute_DXYN_superchip11(x, y, n)?; // delegate to SUPER-CHIP 1.1-specific method
+                Ok(0) // return 0, as no variable cycle timing exists for SUPER-CHIP emulation mode
+            }
+        }
+    }
+
+    // Private function to execute DXYN for CHIP-8 / CHIP-48 emulation level
+    fn execute_DXYN_chip8(&mut self, x: usize, y: usize, n: u8) -> Result<u64, ErrorDetail> {
         // Base timing is decode time plus lowest possible execute and lowest possible idle
         const BASE_CYCLES: u64 = 68 + 170 + 2355;
         const MAX_EXTRA_EXECUTE_CYCLES: u64 = 3812 - 170;
@@ -427,6 +509,11 @@ impl Processor {
         Ok(BASE_CYCLES
             + rng.gen_range(0..=MAX_EXTRA_EXECUTE_CYCLES)
             + rng.gen_range(0..=MAX_EXTRA_IDLE_CYCLES))
+    }
+
+    // Private function to execute DXYN for SUPER-CHIP 1.1 emulation level
+    fn execute_DXYN_superchip11(&mut self, x: usize, y: usize, n: u8) -> Result<(), ErrorDetail> {
+        todo!();
     }
 
     /// Executes the EX9E instruction - SKP Vx
@@ -585,7 +672,8 @@ impl Processor {
         }
         // Fetch the character hex code in Vx and check it is within expected bounds
         let character = self.variable_registers[x];
-        if character > FONT_SPRITE_COUNT {
+        let font: &Font = &self.low_resolution_font;
+        if character >= (font.font_data_size() / font.char_size()) as u8 {
             let mut operands: HashMap<String, usize> = HashMap::new();
             operands.insert("character".to_string(), character as usize);
             return Err(ErrorDetail::OperandsOutOfBounds { operands });
@@ -594,9 +682,43 @@ impl Processor {
         // character (in bytes), the starting location of font data in memory, and the offset of
         // the requested character's ordinal within the range of font characters
         let character_memory_location: usize =
-            (character as usize) * self.font.char_size() + self.font_start_address;
+            (character as usize) * font.char_size() + self.font_start_address;
         self.index_register = character_memory_location as u16;
         Ok(CYCLES)
+    }
+
+    /// Executes the FX30 instruction - LD HF, Vx
+    /// Purpose: [SUPER-CHIP 1.1] point I to 10-byte font sprite for digit Vx
+    ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
+    pub(super) fn execute_FX30(&mut self, x: usize) -> Result<u64, ErrorDetail> {
+        match self.emulation_level {
+            EmulationLevel::SuperChip11 => {
+                if x >= VARIABLE_REGISTER_COUNT {
+                    let mut operands: HashMap<String, usize> = HashMap::new();
+                    operands.insert("x".to_string(), x);
+                    return Err(ErrorDetail::OperandsOutOfBounds { operands });
+                }
+                // Fetch the character hex code in Vx and check it is within expected bounds
+                let character = self.variable_registers[x];
+                let font: &Font = self.high_resolution_font.as_ref().unwrap();
+                if character >= (font.font_data_size() / font.char_size()) as u8 {
+                    let mut operands: HashMap<String, usize> = HashMap::new();
+                    operands.insert("character".to_string(), character as usize);
+                    return Err(ErrorDetail::OperandsOutOfBounds { operands });
+                }
+                // Calculate the corresponding font sprite location in memory based on the size per font
+                // character (in bytes), the starting location of font data in memory, and the offset of
+                // the requested character's ordinal within the range of font characters
+                let character_memory_location: usize = (character as usize) * font.char_size()
+                    + self.high_resolution_font_start_address;
+                self.index_register = character_memory_location as u16;
+                Ok(0)
+            }
+            EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
+                let opcode: u16 = 0xF030 | ((x as u16) << 8);
+                Err(ErrorDetail::UnknownInstruction { opcode })
+            }
+        }
     }
 
     /// Executes the FX33 instruction - LD V, Vx
@@ -624,7 +746,7 @@ impl Processor {
     }
 
     /// Executes the FX55 instruction - LD [I], Vx
-    /// Purpose: store registers V0 to Vx in memory starting at the address in the index register    
+    /// Purpose: store registers V0 to Vx in memory starting at the address in I   
     ///          [CHIP-8] also set I to I + x + 1
     ///          [CHIP-48] also set I to I + x
     ///          [SUPER-CHIP 1.1] do not modify I    
@@ -659,7 +781,7 @@ impl Processor {
     }
 
     /// Executes the FX65 instruction - LD Vx, [I]
-    /// Purpose: populate registers V0 to Vx from memory starting at the address in the index register
+    /// Purpose: populate registers V0 to Vx from memory starting at the address in I
     ///          [CHIP-8] also set I to I + x + 1
     ///          [CHIP-48] also set I to I + x
     ///          [SUPER-CHIP 1.1] do not modify I
@@ -694,5 +816,49 @@ impl Processor {
         let variable_count: u64 = (x + 1) as u64;
         // Timing is calculated as base amount plus an increment multiplied by every variable stored
         Ok(CYCLES_BASE + (CYCLES_INCREMENTAL * variable_count))
+    }
+
+    /// Executes the FX75 instruction - LD R, Vx
+    /// Purpose: [SUPER-CHIP 1.1] store registers V0 to Vx in RPL user flags starting at address in I
+    ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
+    pub(super) fn execute_FX75(&mut self, x: usize) -> Result<u64, ErrorDetail> {
+        match self.emulation_level {
+            EmulationLevel::SuperChip11 => {
+                if x >= RPL_REGISTER_COUNT {
+                    let mut operands: HashMap<String, usize> = HashMap::new();
+                    operands.insert("x".to_string(), x);
+                    return Err(ErrorDetail::OperandsOutOfBounds { operands });
+                }
+                // Iterate through the appropriate portion of the variable register array
+                self.rpl_registers[0..=x].copy_from_slice(&self.variable_registers[0..=x]);
+                Ok(0)
+            }
+            EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
+                let opcode: u16 = 0xF075 | ((x as u16) << 8);
+                Err(ErrorDetail::UnknownInstruction { opcode })
+            }
+        }
+    }
+
+    /// Executes the FX85 instruction - LD Vx, R
+    /// Purpose: [SUPER-CHIP 1.1] populate registers V0 to Vx from RPL user flags starting at address in I
+    ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
+    pub(super) fn execute_FX85(&mut self, x: usize) -> Result<u64, ErrorDetail> {
+        match self.emulation_level {
+            EmulationLevel::SuperChip11 => {
+                if x >= RPL_REGISTER_COUNT {
+                    let mut operands: HashMap<String, usize> = HashMap::new();
+                    operands.insert("x".to_string(), x);
+                    return Err(ErrorDetail::OperandsOutOfBounds { operands });
+                }
+                // Iterate through the appropriate portion of the variable register array
+                self.variable_registers[0..=x].copy_from_slice(&self.rpl_registers[0..=x]);
+                Ok(0)
+            }
+            EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
+                let opcode: u16 = 0xF085 | ((x as u16) << 8);
+                Err(ErrorDetail::UnknownInstruction { opcode })
+            }
+        }
     }
 }

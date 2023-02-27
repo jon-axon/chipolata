@@ -1,4 +1,5 @@
 use crate::{EmulationLevel, ErrorDetail};
+use rand::Rng;
 
 /// The default memory size for all system variants (in bytes).
 const CHIPOLATA_MEMORY_SIZE_BYTES: usize = 0x1000;
@@ -6,9 +7,10 @@ const CHIPOLATA_MEMORY_SIZE_BYTES: usize = 0x1000;
 // From this, the last 352 bytes are reserved
 const CHIP8_SMALL_ADDRESSABLE_MEMORY_BYTES: usize = 0x6A0;
 const CHIP8_LARGE_ADDRESSABLE_MEMORY_BYTES: usize = 0xEA0;
-// For CHIP-48 and SUPER-CHIP 1.1 the full 4096 bytes are addressable
+// For CHIP-48 the full 4096 bytes are addressable
 const CHIP48_ADDRESSABLE_MEMORY_BYTES: usize = 0x1000;
-const SUPERCHIP11_ADDRESSABLE_MEMORY_BYTES: usize = 0x1000;
+// For SUPER-CHIP 1.1 the final byte is reserved (presumably by mistake), so 4095 are addressable
+const SUPERCHIP11_ADDRESSABLE_MEMORY_BYTES: usize = 0xFFF;
 
 /// An abstraction of the CHIP-8 memory space.
 #[derive(Clone, Debug, PartialEq)]
@@ -20,15 +22,27 @@ pub struct Memory {
 }
 
 impl Memory {
-    /// Constructor that returns a [Memory] instance initialised with all bytes 0x00.
+    /// Constructor that returns a [Memory] instance initialised with all bytes 0x00.  If
+    /// the emulation level is [EmulationLevel::SuperChip11] then the memory will instead
+    /// be randomised on startup, mirroring original behaviour.
+    ///
     /// The addressable memory space will be (soft) limited depending on emulation level.
     ///
     /// # Arguments
     ///
     /// * `emulation_level` - the CHIP-8 variant to be emulated (impacts addressable memory)
     pub(crate) fn new(emulation_level: EmulationLevel) -> Self {
+        let mut bytes: [u8; CHIPOLATA_MEMORY_SIZE_BYTES] = [0x0; CHIPOLATA_MEMORY_SIZE_BYTES];
+        // For SUPER-CHIP 1.1 emulation, assign each memory slot a random byte value
+        if let EmulationLevel::SuperChip11 = emulation_level {
+            rand::thread_rng().fill(&mut bytes[..]);
+            // let mut rng = rand::thread_rng();
+            // for slot in bytes.iter_mut() {
+            //     *slot = rng.gen();
+            // }
+        }
         Self {
-            bytes: [0x0; CHIPOLATA_MEMORY_SIZE_BYTES],
+            bytes,
             address_limit: match emulation_level {
                 EmulationLevel::Chip8 {
                     memory_limit_2k: true,
@@ -153,6 +167,43 @@ impl Memory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_zero_initialisation_chip8() {
+        let instance_one_first_byte: u8 = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+            variable_cycle_timing: false,
+        })
+        .read_byte(0x0)
+        .unwrap();
+        let instance_two_first_byte: u8 = Memory::new(EmulationLevel::Chip8 {
+            memory_limit_2k: false,
+            variable_cycle_timing: false,
+        })
+        .read_byte(0x0)
+        .unwrap();
+        assert_eq!(instance_one_first_byte, instance_two_first_byte);
+    }
+
+    #[test]
+    fn test_zero_initialisation_chip48() {
+        let instance_one_first_byte: u8 =
+            Memory::new(EmulationLevel::Chip48).read_byte(0x0).unwrap();
+        let instance_two_first_byte: u8 =
+            Memory::new(EmulationLevel::Chip48).read_byte(0x0).unwrap();
+        assert_eq!(instance_one_first_byte, instance_two_first_byte);
+    }
+
+    #[test]
+    fn test_random_initialisation_superchip11() {
+        let instance_one_first_byte: u8 = Memory::new(EmulationLevel::SuperChip11)
+            .read_byte(0x0)
+            .unwrap();
+        let instance_two_first_byte: u8 = Memory::new(EmulationLevel::SuperChip11)
+            .read_byte(0x0)
+            .unwrap();
+        assert_ne!(instance_one_first_byte, instance_two_first_byte);
+    }
 
     #[test]
     fn test_read_byte() {

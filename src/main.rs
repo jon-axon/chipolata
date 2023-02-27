@@ -121,7 +121,11 @@ impl ChipolataApp {
     fn render_ui(&mut self, ui: &mut Ui) {
         let painter = ui.painter();
         if let Ok(disp) = self.proc_output_rx.try_recv() {
-            if let StateSnapshot::MinimalSnapshot { frame_buffer } = disp {
+            if let StateSnapshot::MinimalSnapshot {
+                frame_buffer,
+                status: _,
+            } = disp
+            {
                 for i in 0..64 {
                     for j in 0..32 {
                         let colour: egui::Color32 =

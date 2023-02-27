@@ -29,12 +29,12 @@ fn test_load_font_data() {
             .memory
             .read_bytes(
                 processor.font_start_address,
-                processor.font.font_data_size(),
+                processor.low_resolution_font.font_data_size(),
             )
             .unwrap(),
     );
     assert!(processor.load_font_data().is_ok());
-    assert_eq!(stored_font, *processor.font.font_data());
+    assert_eq!(stored_font, *processor.low_resolution_font.font_data());
 }
 
 #[test]
@@ -44,7 +44,65 @@ fn test_load_font_data_overflow_error() {
     assert_eq!(
         processor.load_font_data().unwrap_err(),
         ErrorDetail::MemoryAddressOutOfBounds {
-            address: (processor.font_start_address + processor.font.font_data_size()) as u16
+            address: (processor.font_start_address + processor.low_resolution_font.font_data_size())
+                as u16
+        }
+    );
+}
+
+#[test]
+fn test_load_font_data_superchip11_low_resolution() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let stored_font: Vec<u8> = Vec::from(
+        processor
+            .memory
+            .read_bytes(
+                processor.font_start_address,
+                processor.low_resolution_font.font_data_size(),
+            )
+            .unwrap(),
+    );
+    assert!(processor.load_font_data().is_ok());
+    assert_eq!(stored_font, *processor.low_resolution_font.font_data());
+}
+
+#[test]
+fn test_load_font_data_superchip11_high_resolution() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let stored_font: Vec<u8> = Vec::from(
+        processor
+            .memory
+            .read_bytes(
+                processor.high_resolution_font_start_address,
+                processor
+                    .high_resolution_font
+                    .as_ref()
+                    .unwrap()
+                    .font_data_size(),
+            )
+            .unwrap(),
+    );
+    assert!(processor.load_font_data().is_ok());
+    assert_eq!(
+        stored_font,
+        *processor.high_resolution_font.unwrap().font_data()
+    );
+}
+
+#[test]
+fn test_load_font_data_superchip11_high_resolution_overflow_error() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    // This leaves space for the low-resolution font, but not the high-resolution one
+    processor.font_start_address = 0x1AF;
+    assert_eq!(
+        processor.load_font_data().unwrap_err(),
+        ErrorDetail::MemoryAddressOutOfBounds {
+            address: (processor.high_resolution_font_start_address
+                + processor
+                    .high_resolution_font
+                    .as_ref()
+                    .unwrap()
+                    .font_data_size()) as u16
         }
     );
 }
@@ -88,25 +146,30 @@ fn test_export_state_snapshot_minimal() {
     assert!(
         matches!(state_snapshot, StateSnapshot::MinimalSnapshot { .. })
             && match state_snapshot {
-                StateSnapshot::MinimalSnapshot { frame_buffer } =>
-                    frame_buffer.pixels[0][0] == 0xC3,
+                StateSnapshot::MinimalSnapshot {
+                    frame_buffer,
+                    status: _,
+                } => frame_buffer.pixels[0][0] == 0xC3,
                 _ => false,
             }
     );
 }
 
 #[test]
-fn test__state_snapshot_verbose() {
+fn test_state_snapshot_verbose() {
     let mut processor: Processor = setup_test_processor_chip8();
     processor.frame_buffer.pixels[0][0] = 0xC3;
+    processor.status = ProcessorStatus::Running;
     processor.program_counter = 0x1DF1;
     processor.index_register = 0x3CC2;
     processor.variable_registers[0x4] = 0xB2;
+    processor.rpl_registers[0x2] = 0x13;
     processor.delay_timer = 0x3;
     processor.sound_timer = 0x4;
     processor.stack.push(0x30E1).unwrap();
     processor.memory.bytes[0x33] = 0x44;
     processor.cycles = 16473;
+    processor.high_resolution_mode = true;
     let state_snapshot: StateSnapshot =
         processor.export_state_snapshot(StateSnapshotVerbosity::Extended);
     assert!(
@@ -114,24 +177,36 @@ fn test__state_snapshot_verbose() {
             && match state_snapshot {
                 StateSnapshot::ExtendedSnapshot {
                     frame_buffer,
+                    status,
                     program_counter,
                     index_register,
                     variable_registers,
+                    rpl_registers,
                     delay_timer,
                     sound_timer,
                     mut stack,
                     memory,
                     cycles,
+                    high_resolution_mode,
+                    emulation_level,
                 } =>
                     frame_buffer.pixels[0][0] == 0xC3
+                        && status == ProcessorStatus::Running
                         && program_counter == 0x1DF1
                         && index_register == 0x3CC2
                         && variable_registers[0x4] == 0xB2
+                        && rpl_registers[0x2] == 0x13
                         && delay_timer == 0x3
                         && sound_timer == 0x4
                         && stack.pop().unwrap() == 0x30E1
                         && memory.bytes[0x33] == 0x44
-                        && cycles == 16473,
+                        && cycles == 16473
+                        && high_resolution_mode == true
+                        && emulation_level
+                            == EmulationLevel::Chip8 {
+                                memory_limit_2k: false,
+                                variable_cycle_timing: false
+                            },
                 _ => false,
             }
     );
@@ -271,6 +346,80 @@ fn test_execute_00EE_empty_stack_error() {
     assert_eq!(
         processor.execute_00EE().unwrap_err(),
         ErrorDetail::PopEmptyStack
+    );
+}
+
+#[test]
+fn test_execute_00FD() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    assert!(processor.execute_00FD().is_ok() && processor.status == ProcessorStatus::Completed);
+}
+
+#[test]
+fn test_execute_00FD_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_00FD().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FD }
+    );
+}
+
+#[test]
+fn test_execute_00FD_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_00FD().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FD }
+    );
+}
+
+#[test]
+fn test_execute_00FE() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.high_resolution_mode = true;
+    assert!(processor.execute_00FE().is_ok() && processor.high_resolution_mode == false);
+}
+
+#[test]
+fn test_execute_00FE_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_00FE().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FE }
+    );
+}
+
+#[test]
+fn test_execute_00FE_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_00FE().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FE }
+    );
+}
+
+#[test]
+fn test_execute_00FF() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.high_resolution_mode = false;
+    assert!(processor.execute_00FF().is_ok() && processor.high_resolution_mode == true);
+}
+
+#[test]
+fn test_execute_00FF_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_00FF().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FF }
+    );
+}
+
+#[test]
+fn test_execute_00FF_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_00FF().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FF }
     );
 }
 
@@ -1311,6 +1460,54 @@ fn test_execute_FX29_invalid_register_x_value_error() {
 }
 
 #[test]
+fn test_execute_FX30() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.variable_registers[0x7] = 0x02;
+    assert!(processor.execute_FX30(0x7).is_ok() && processor.index_register == 0xB4);
+}
+
+#[test]
+fn test_execute_FX30_invalid_register_x_error() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    assert_eq!(
+        processor.execute_FX30(0x10).unwrap_err(),
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
+    );
+}
+
+#[test]
+fn test_execute_FX30_invalid_register_x_value_error() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("character".to_string(), 0x0A);
+    processor.variable_registers[0x7] = 0x0A;
+    assert_eq!(
+        processor.execute_FX30(0x7).unwrap_err(),
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
+    );
+}
+
+#[test]
+fn test_execute_FX30_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_FX30(0x3).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0xF330 }
+    );
+}
+
+#[test]
+fn test_execute_FX30_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_FX30(0x3).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0xF330 }
+    );
+}
+
+#[test]
 fn test_execute_FX33_one_digit() {
     let mut processor: Processor = setup_test_processor_chip8();
     processor.index_register = 0x025A;
@@ -1431,7 +1628,6 @@ fn test_execute_FX55_multiple_registers_superchip11_mode() {
             && processor.memory.read_byte(0x025B).unwrap() == 0x12
             && processor.memory.read_byte(0x025C).unwrap() == 0xF4
             && processor.memory.read_byte(0x025D).unwrap() == 0x2D
-            && processor.memory.read_byte(0x025E).unwrap() == 0x0
             && processor.index_register == 0x025A
     );
 }
@@ -1531,5 +1727,129 @@ fn test_execute_FX65_invalid_register_x_error() {
     assert_eq!(
         processor.execute_FX65(0x10).unwrap_err(),
         ErrorDetail::OperandsOutOfBounds { operands: operands }
+    );
+}
+
+#[test]
+fn test_execute_FX75_one_register() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.variable_registers[0x0] = 0x3C;
+    processor.variable_registers[0x1] = 0x12;
+    processor.variable_registers[0x2] = 0xF4;
+    processor.variable_registers[0x3] = 0x2D;
+    processor.variable_registers[0x4] = 0x07;
+    assert!(
+        processor.execute_FX75(0x0).is_ok()
+            && processor.rpl_registers[0x0] == 0x3C
+            && processor.rpl_registers[0x1] == 0x0
+    );
+}
+
+#[test]
+fn test_execute_FX75_multiple_registers() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.variable_registers[0x0] = 0x3C;
+    processor.variable_registers[0x1] = 0x12;
+    processor.variable_registers[0x2] = 0xF4;
+    processor.variable_registers[0x3] = 0x2D;
+    processor.variable_registers[0x4] = 0x07;
+    assert!(
+        processor.execute_FX75(0x03).is_ok()
+            && processor.rpl_registers[0x0] == 0x3C
+            && processor.rpl_registers[0x1] == 0x12
+            && processor.rpl_registers[0x2] == 0xF4
+            && processor.rpl_registers[0x3] == 0x2D
+            && processor.rpl_registers[0x4] == 0x0
+    );
+}
+
+#[test]
+fn test_execute_FX75_invalid_register_x_error() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x8);
+    assert_eq!(
+        processor.execute_FX75(0x8).unwrap_err(),
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
+    );
+}
+
+#[test]
+fn test_execute_FX75_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_FX75(0x3).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0xF375 }
+    );
+}
+
+#[test]
+fn test_execute_FX75_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_FX75(0x3).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0xF375 }
+    );
+}
+
+#[test]
+fn test_execute_FX85_one_register() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.rpl_registers[0x0] = 0x3C;
+    processor.rpl_registers[0x1] = 0x12;
+    processor.rpl_registers[0x2] = 0xF4;
+    processor.rpl_registers[0x3] = 0x2D;
+    processor.rpl_registers[0x4] = 0x07;
+    assert!(
+        processor.execute_FX85(0x0).is_ok()
+            && processor.variable_registers[0x0] == 0x3C
+            && processor.variable_registers[0x1] == 0x0
+    );
+}
+
+#[test]
+fn test_execute_FX85_multiple_registers() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.rpl_registers[0x0] = 0x3C;
+    processor.rpl_registers[0x1] = 0x12;
+    processor.rpl_registers[0x2] = 0xF4;
+    processor.rpl_registers[0x3] = 0x2D;
+    processor.rpl_registers[0x4] = 0x07;
+    assert!(
+        processor.execute_FX85(0x03).is_ok()
+            && processor.variable_registers[0x0] == 0x3C
+            && processor.variable_registers[0x1] == 0x12
+            && processor.variable_registers[0x2] == 0xF4
+            && processor.variable_registers[0x3] == 0x2D
+            && processor.variable_registers[0x4] == 0x0
+    );
+}
+
+#[test]
+fn test_execute_FX85_invalid_register_x_error() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x8);
+    assert_eq!(
+        processor.execute_FX85(0x8).unwrap_err(),
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
+    );
+}
+
+#[test]
+fn test_execute_FX85_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_FX85(0x3).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0xF385 }
+    );
+}
+
+#[test]
+fn test_execute_FX85_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_FX85(0x3).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0xF385 }
     );
 }
