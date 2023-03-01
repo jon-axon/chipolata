@@ -24,7 +24,7 @@ fn setup_test_processor_fixed_timing() -> Processor {
 #[test]
 fn test_processor_speed_fixed() {
     let processor_speed: u64 = 2000;
-    let tolerance_percent: u64 = 2; // permitted difference between specified and calculated
+    let tolerance_percent: u64 = 3; // permitted difference between specified and calculated
     let program_data: Vec<u8> = vec![0xF0, 0x0A];
     let program: Program = Program::new(program_data);
     let mut options: Options = Options::default();

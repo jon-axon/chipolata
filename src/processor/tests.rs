@@ -140,7 +140,7 @@ fn test_load_program_overflow_error() {
 #[test]
 fn test_export_state_snapshot_minimal() {
     let mut processor: Processor = setup_test_processor_chip8();
-    processor.frame_buffer.pixels[0][0] = 0xC3;
+    processor.frame_buffer[0][0] = 0xC3;
     let state_snapshot: StateSnapshot =
         processor.export_state_snapshot(StateSnapshotVerbosity::Minimal);
     assert!(
@@ -149,7 +149,7 @@ fn test_export_state_snapshot_minimal() {
                 StateSnapshot::MinimalSnapshot {
                     frame_buffer,
                     status: _,
-                } => frame_buffer.pixels[0][0] == 0xC3,
+                } => frame_buffer[0][0] == 0xC3,
                 _ => false,
             }
     );
@@ -158,7 +158,7 @@ fn test_export_state_snapshot_minimal() {
 #[test]
 fn test_state_snapshot_verbose() {
     let mut processor: Processor = setup_test_processor_chip8();
-    processor.frame_buffer.pixels[0][0] = 0xC3;
+    processor.frame_buffer[0][0] = 0xC3;
     processor.status = ProcessorStatus::Running;
     processor.program_counter = 0x1DF1;
     processor.index_register = 0x3CC2;
@@ -190,7 +190,7 @@ fn test_state_snapshot_verbose() {
                     high_resolution_mode,
                     emulation_level,
                 } =>
-                    frame_buffer.pixels[0][0] == 0xC3
+                    frame_buffer[0][0] == 0xC3
                         && status == ProcessorStatus::Running
                         && program_counter == 0x1DF1
                         && index_register == 0x3CC2
@@ -306,21 +306,53 @@ fn test_execute_004B() {
 }
 
 #[test]
+fn test_execute_00CN_superchip11() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    // Set the first byte of the first row to be 11111111 (i.e. 0xFF) and the first byte of the
+    // 10th row to be 00000000 (i.e. 0x00)
+    processor.frame_buffer[0][0] = 0xFF;
+    processor.frame_buffer[9][0] = 0x00;
+    // When scrolled down by 9 pixels, this first byte of the 10th row should become 111111111 (i.e. 0xFF)
+    assert!(
+        processor.frame_buffer.scroll_display_down(9).is_ok()
+            && processor.frame_buffer[9][0] == 0xFF
+    );
+}
+
+#[test]
+fn test_execute_00CN_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_00CN(2).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00C2 }
+    );
+}
+
+#[test]
+fn test_execute_00CN_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_00CN(2).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00C2 }
+    );
+}
+
+#[test]
 fn test_execute_00E0() {
     let mut processor: Processor = setup_test_processor_chip8();
     // Set every pixel to 1
-    for row in &mut processor.frame_buffer.pixels {
-        for col in &mut *row {
-            *col = 0xFF;
+    for column in 0..processor.frame_buffer.get_row_size_bytes() {
+        for row in 0..processor.frame_buffer.get_column_size_pixels() {
+            processor.frame_buffer[row][column] = 0xFF;
         }
     }
     // Now execute the instruction to clear the display
     processor.execute_00E0().unwrap();
     // Now check that every pixel is 0
     let mut pixel_is_set: bool = false;
-    'outer: for row in &processor.frame_buffer.pixels {
-        for col in row {
-            if *col > 0x00 {
+    'outer: for column in 0..processor.frame_buffer.get_row_size_bytes() {
+        for row in 0..processor.frame_buffer.get_column_size_pixels() {
+            if processor.frame_buffer[row][column] > 0x00 {
                 pixel_is_set = true;
                 break 'outer;
             }
@@ -346,6 +378,67 @@ fn test_execute_00EE_empty_stack_error() {
     assert_eq!(
         processor.execute_00EE().unwrap_err(),
         ErrorDetail::PopEmptyStack
+    );
+}
+
+#[test]
+fn test_execute_00FB_superchip11() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let row_size: usize = processor.frame_buffer.get_row_size_bytes();
+    // Set the last byte of the first row to be 11110000 (i.e. 0xF0)
+    processor.frame_buffer[0][row_size - 1] = 0xF0;
+    // When scrolled right by 4 pixels, this last byte should become 00001111 (i.e. 0x0F)
+    assert!(
+        processor.frame_buffer.scroll_display_right().is_ok()
+            && processor.frame_buffer[0][row_size - 1] == 0x0F
+    );
+}
+
+#[test]
+fn test_execute_00FB_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_00FB().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FB }
+    );
+}
+
+#[test]
+fn test_execute_00FB_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_00FB().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FB }
+    );
+}
+
+#[test]
+fn test_execute_00FC_superchip11() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    // Set the first byte of the first row to be 00001111 (i.e. 0x0F)
+    processor.frame_buffer[0][0] = 0x0F;
+    // When scrolled left by 4 pixels, this first byte should become 11110000 (i.e. 0xF0)
+    assert!(
+        processor.frame_buffer.scroll_display_left().is_ok()
+            && processor.frame_buffer[0][0] == 0xF0
+    );
+}
+
+#[test]
+fn test_execute_00FC_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_00FC().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FC }
+    );
+}
+
+#[test]
+fn test_execute_00FC_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_00FC().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FC }
     );
 }
 
@@ -1122,7 +1215,7 @@ fn test_execute_CXNN_invalid_register_x_error() {
 }
 
 fn fill_row(display: &mut Display, y: usize) {
-    for i in &mut display.pixels[y] {
+    for i in &mut display[y] {
         *i = 0xFF;
     }
 }
@@ -1131,7 +1224,7 @@ fn fill_row(display: &mut Display, y: usize) {
 fn test_execute_DXYN_pixel_turned_off() {
     let mut processor: Processor = setup_test_processor_chip8();
     fill_row(&mut processor.frame_buffer, 0x1); // all display pixels on in second row
-    processor.frame_buffer.pixels[0x1][0x0] = 0x0; // turn off first byte of pixels only
+    processor.frame_buffer[0x1][0x0] = 0x0; // turn off first byte of pixels only
     processor.variable_registers[0xF] = 0x2; // only possible values later are 0x0 and 0x1
     processor.index_register = processor.font_start_address as u16;
     let sprite: [u8; 1] = [0xFF]; // create single-byte sprite with all pixels on
@@ -1160,6 +1253,109 @@ fn test_execute_DXYN_no_pixel_turned_off() {
     processor.variable_registers[0xA] = 0x1; // set V10 to 1 (Y coordinate)
     processor.execute_DXYN(0x3, 0xA, 1).unwrap();
     assert_eq!(processor.variable_registers[0xF], 0x0); // no pixel will flip if successful
+}
+
+#[test]
+fn test_duplicate_bits() {
+    let (a, b) = Processor::duplicate_bits(0b10110101);
+    assert!(a == 0b11001111 && b == 0b00110011);
+    let (a, b) = Processor::duplicate_bits(0b11100110);
+    assert!(a == 0b11111100 && b == 0b00111100);
+    let (a, b) = Processor::duplicate_bits(0b11111111);
+    assert!(a == 0b11111111 && b == 0b11111111);
+}
+
+#[test]
+fn test_execute_DXYN_superchip11_low_res_trivial_sprite() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.high_resolution_mode = false;
+    processor.variable_registers[0xF] = 0x1; // set Vf to 1
+    processor.index_register = processor.font_start_address as u16;
+    // Create a trivial 1-bit sprite: 10000000
+    let sprite: [u8; 1] = [0x80];
+    // Write sprite to memory at default font location
+    processor
+        .memory
+        .write_bytes(processor.font_start_address, &sprite)
+        .unwrap();
+    // Set V3 to 1 (X coordinate) and V10 to 1 (Y coordinate)
+    processor.variable_registers[0x3] = 0x1;
+    processor.variable_registers[0xA] = 0x1;
+    // The following should execute a low-res SUPER-CHIP draw, which should up-scale the sprite to 2x2
+    processor.execute_DXYN(0x3, 0xA, 1).unwrap();
+    assert!(
+        processor.variable_registers[0xF] == 0x0 // no collisions occurred
+            && processor.frame_buffer[0][0] == 0x00 // 00000000
+            && processor.frame_buffer[1][0] == 0x00 // 00000000
+            && processor.frame_buffer[2][0] == 0x30 // 00110000
+            && processor.frame_buffer[3][0] == 0x30 // 00110000
+    );
+}
+
+#[test]
+fn test_execute_DXYN_superchip11_low_res_wide_sprite() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.high_resolution_mode = false;
+    processor.variable_registers[0xF] = 0x1; // set Vf to 1
+    processor.index_register = processor.font_start_address as u16;
+    // Create a full-width sprite: 10011011
+    let sprite: [u8; 1] = [0x9B];
+    // Write sprite to memory at default font location
+    processor
+        .memory
+        .write_bytes(processor.font_start_address, &sprite)
+        .unwrap();
+    // Set V3 to 2 (X coordinate) and V10 to 2 (Y coordinate)
+    processor.variable_registers[0x3] = 0x2;
+    processor.variable_registers[0xA] = 0x2;
+    // The following should execute a low-res SUPER-CHIP draw, which should up-scale the sprite 2x
+    processor.execute_DXYN(0x3, 0xA, 1).unwrap();
+    assert!(
+        processor.variable_registers[0xF] == 0x0 // no collisions occurred
+            && processor.frame_buffer[0][0] == 0x00 // 00000000
+            && processor.frame_buffer[0][1] == 0x00 // 00000000
+            && processor.frame_buffer[0][2] == 0x00 // 00000000
+            && processor.frame_buffer[1][0] == 0x00 // 00000000
+            && processor.frame_buffer[1][1] == 0x00 // 00000000
+            && processor.frame_buffer[1][2] == 0x00 // 00000000
+            && processor.frame_buffer[2][0] == 0x00 // 00000000
+            && processor.frame_buffer[2][1] == 0x00 // 00000000
+            && processor.frame_buffer[2][2] == 0x00 // 00000000
+            && processor.frame_buffer[3][0] == 0x00 // 00000000
+            && processor.frame_buffer[3][1] == 0x00 // 00000000
+            && processor.frame_buffer[3][2] == 0x00 // 00000000
+            && processor.frame_buffer[4][0] == 0x0C // 00001100
+            && processor.frame_buffer[4][1] == 0x3C // 00111100
+            && processor.frame_buffer[4][2] == 0xF0 // 11110000
+            && processor.frame_buffer[5][0] == 0x0C // 00001100
+            && processor.frame_buffer[5][1] == 0x3C // 00111100
+            && processor.frame_buffer[5][2] == 0xF0 // 11110000
+    );
+}
+
+#[test]
+fn test_execute_DXY0_superchip11() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.high_resolution_mode = true;
+    let display_rows: usize = processor.frame_buffer.get_column_size_pixels();
+    fill_row(&mut processor.frame_buffer, display_rows - 2); // all display pixels on in penultimate row
+    fill_row(&mut processor.frame_buffer, display_rows - 1); // all display pixels on in final row
+    processor.variable_registers[0xF] = 0x0; // set Vf to 0
+    processor.index_register = processor.font_start_address as u16;
+    let sprite: [u8; 32] = [0xFF; 32]; // create 32-byte sprite with all pixels on
+    processor
+        .memory
+        .write_bytes(processor.font_start_address, &sprite)
+        .unwrap(); // write sprite to memory at default font location
+    processor.variable_registers[0x3] = 0x8; // set V3 to 0 (X coordinate)
+                                             // set V10 (Y coord) to 3rd final row // execute a DXY0 instruction
+    processor.variable_registers[0xA] = (display_rows - 3) as u8;
+    // This operation should cause pixel collison on two rows (penultimate and final but not third last)
+    // and should also cause clipping of 13 rows (16-byte high sprite with only 3 rows on-screen)
+    assert!(
+        processor.execute_DXYN(0x3, 0xA, 0).unwrap() == 0
+            && processor.variable_registers[0xF] == 0xF // 2 + 13 = 15 = 0xF
+    );
 }
 
 #[test]

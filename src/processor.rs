@@ -154,7 +154,7 @@ impl Processor {
             _ => None,
         };
         let mut processor = Processor {
-            frame_buffer: Display::new(),
+            frame_buffer: Display::new(options.emulation_level),
             stack: Stack::new(options.emulation_level),
             memory: Memory::new(options.emulation_level),
             program_counter: options.program_start_address,

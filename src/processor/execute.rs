@@ -12,7 +12,16 @@ impl Processor {
     /// Purpose: [SUPER-CHIP 1.1] scroll display N pixels down (N/2 in low-resolution mode)
     ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
     pub(super) fn execute_00CN(&mut self, n: u8) -> Result<u64, ErrorDetail> {
-        todo!()
+        match self.emulation_level {
+            EmulationLevel::SuperChip11 => {
+                self.frame_buffer.scroll_display_down(n)?;
+                Ok(0)
+            }
+            EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
+                let opcode: u16 = 0x00C0 | (n as u16);
+                Err(ErrorDetail::UnknownInstruction { opcode })
+            }
+        }
     }
 
     /// Executes the 00E0 instruction - CLS
@@ -36,14 +45,30 @@ impl Processor {
     /// Purpose: [SUPER-CHIP 1.1] scroll right by 4 pixels (2 in low-resolution mode)
     ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
     pub(super) fn execute_00FB(&mut self) -> Result<u64, ErrorDetail> {
-        todo!()
+        match self.emulation_level {
+            EmulationLevel::SuperChip11 => {
+                self.frame_buffer.scroll_display_right()?;
+                Ok(0)
+            }
+            EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
+                Err(ErrorDetail::UnknownInstruction { opcode: 0x00FB })
+            }
+        }
     }
 
     /// Executes the 00FC instruction - SCL
     /// Purpose: [SUPER-CHIP 1.1] scroll left by 4 pixels (2 in low-resolution mode)
     ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
     pub(super) fn execute_00FC(&mut self) -> Result<u64, ErrorDetail> {
-        todo!()
+        match self.emulation_level {
+            EmulationLevel::SuperChip11 => {
+                self.frame_buffer.scroll_display_left()?;
+                Ok(0)
+            }
+            EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
+                Err(ErrorDetail::UnknownInstruction { opcode: 0x00FC })
+            }
+        }
     }
 
     /// Executes the 00FD instruction - EXIT
@@ -460,16 +485,27 @@ impl Processor {
     /// Purpose: display the N-byte sprite starting at memory location I at display
     /// coordinate (Vx, Vy)
     ///          [CHIP-8 / CHIP-48] set Vf = 1 if collision
-    ///          [SUPER-CHIP 1.1] separate implementation for higher resolution mode,
-    ///                           also set Vf = n where n is rows that collide or clip screen bottom
+    ///          [SUPER-CHIP 1.1] separate implementation for higher resolution mode:
+    ///                           special implementation of DXY0 also set Vf = n where
+    ///                           n is rows that collide or clip screen bottom
     pub(super) fn execute_DXYN(&mut self, x: usize, y: usize, n: u8) -> Result<u64, ErrorDetail> {
+        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT || n > MAX_SPRITE_HEIGHT {
+            let mut operands: HashMap<String, usize> = HashMap::new();
+            operands.insert("x".to_string(), x);
+            operands.insert("y".to_string(), y);
+            operands.insert("n".to_string(), n as usize);
+            return Err(ErrorDetail::OperandsOutOfBounds { operands });
+        }
         match self.emulation_level {
             EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
-                self.execute_DXYN_chip8(x, y, n) // delegate to CHIP-8/48-specific method
+                self.execute_DXYN_chip8(x, y, n) // delegate to standard CHIP-8 method
             }
             EmulationLevel::SuperChip11 => {
-                self.execute_DXYN_superchip11(x, y, n)?; // delegate to SUPER-CHIP 1.1-specific method
-                Ok(0) // return 0, as no variable cycle timing exists for SUPER-CHIP emulation mode
+                match (self.high_resolution_mode, n) {
+                    (true, 0) => self.execute_DXY0_superchip11(x, y), // special behaviour where n = 0
+                    (true, ..) => self.execute_DXYN_chip8(x, y, n), // delegate to standard CHIP-8 method
+                    (false, ..) => self.execute_DXYN_superchip11_low_res(x, y, n),
+                }
             }
         }
     }
@@ -480,29 +516,31 @@ impl Processor {
         const BASE_CYCLES: u64 = 68 + 170 + 2355;
         const MAX_EXTRA_EXECUTE_CYCLES: u64 = 3812 - 170;
         const MAX_EXTRA_IDLE_CYCLES: u64 = 3666 - 2355;
-        if x >= VARIABLE_REGISTER_COUNT || y >= VARIABLE_REGISTER_COUNT || n > MAX_SPRITE_HEIGHT {
-            let mut operands: HashMap<String, usize> = HashMap::new();
-            operands.insert("x".to_string(), x);
-            operands.insert("y".to_string(), y);
-            operands.insert("n".to_string(), n as usize);
-            return Err(ErrorDetail::OperandsOutOfBounds { operands });
-        }
         // Read the sprite to draw as an N-byte array slice at memory location
         // pointed to by the index register
         let sprite: &[u8] = self
             .memory
             .read_bytes(self.index_register as usize, n as usize)?;
         // Call into the Chipolata display to draw this sprite at location (Vx, Vy),
-        // storing the result (i.e. whether collision occured) in a temp variable
-        let any_pixel_turned_off: bool = self.frame_buffer.draw_sprite(
+        // storing the results (i.e. collision and clip row counts) in temp variables
+        let (rows_with_collisions, rows_clipped) = self.frame_buffer.draw_sprite(
             self.variable_registers[x] as usize,
             self.variable_registers[y] as usize,
             sprite,
+            false,
         )?;
-        // Set Vf to 1 or 0 if collision did or did not occur, respectively
-        self.variable_registers[0xF] = match any_pixel_turned_off {
-            true => 0x1,
-            false => 0x0,
+        // If in high-resolution mode for SUPER-CHIP 1.1 emulation level, set Vf to the number
+        // of rows that either underwent collision or were clipped off the bottom of the screen
+        // Otherwise, set Vf to 1 if collision occurred in at least one row, and 0 if it did not.
+        self.variable_registers[0xF] = match (self.emulation_level, self.high_resolution_mode) {
+            (EmulationLevel::SuperChip11, true) => rows_with_collisions + rows_clipped,
+            _ => {
+                if rows_with_collisions > 0 {
+                    0x1 // collisions occurred
+                } else {
+                    0x0 // collisions did not occur
+                }
+            }
         };
         // Now calculate a randomised cycle execution value within possible range
         let mut rng = rand::thread_rng();
@@ -511,9 +549,83 @@ impl Processor {
             + rng.gen_range(0..=MAX_EXTRA_IDLE_CYCLES))
     }
 
-    // Private function to execute DXYN for SUPER-CHIP 1.1 emulation level
-    fn execute_DXYN_superchip11(&mut self, x: usize, y: usize, n: u8) -> Result<(), ErrorDetail> {
-        todo!();
+    // Private function to execute low-DXYN for SUPER-CHIP 1.1 emulation level
+    fn execute_DXYN_superchip11_low_res(
+        &mut self,
+        x: usize,
+        y: usize,
+        n: u8,
+    ) -> Result<u64, ErrorDetail> {
+        // To simulate low-resolution mode whilst at the SUPER-CHIP 1.1 emulation level we use the
+        // normal display draw_sprite() method, but must explode every pixel to a 2x2 pixel.
+        // First get the low-resolution sprite like normal
+        let sprite: &[u8] = self
+            .memory
+            .read_bytes(self.index_register as usize, n as usize)?;
+        // Now declare two vectors to represent the left and right portions of the high-res sprite
+        let mut sprite_left: Vec<u8> = Vec::new();
+        let mut sprite_right: Vec<u8> = Vec::new();
+        // Iterate through each byte in the original sprite, duplicating bits in each row and assigning
+        // the two new bytes in each case to left and right sprite vector accordingly. Add each value
+        // to the new sprite vectors TWICE, as we are creating two rows per original row (2x2)
+        for byte in sprite {
+            let (left_byte, right_byte) = Processor::duplicate_bits(*byte);
+            sprite_left.push(left_byte);
+            sprite_left.push(left_byte);
+            sprite_right.push(right_byte);
+            sprite_right.push(right_byte);
+        }
+        // Now draw each of these two new sprites in turn at twice the specified X and Y coords
+        // The right-hand sprite should start 8 pixels further right i.e. X + 8
+        let (rows_with_collisions_left, _) = self.frame_buffer.draw_sprite(
+            self.variable_registers[x] as usize * 2,
+            self.variable_registers[y] as usize * 2,
+            &sprite_left,
+            false,
+        )?;
+        let (rows_with_collisions_right, _) = self.frame_buffer.draw_sprite(
+            (self.variable_registers[x] as usize * 2) + 8,
+            self.variable_registers[y] as usize * 2,
+            &sprite_right,
+            false,
+        )?;
+        // Finally, set Vf according to whether any collisions occurred
+        self.variable_registers[0xF] =
+            match rows_with_collisions_left + rows_with_collisions_right > 0 {
+                true => 0x1,
+                false => 0x0,
+            };
+        Ok(0)
+    }
+
+    // Helper function that takes a byte and duplicates each bit next to the original bit,
+    // returning the results as two new bytes
+    pub(crate) fn duplicate_bits(byte: u8) -> (u8, u8) {
+        let mut y: u16 = byte as u16;
+        // Black magic bit manipulation ensues ...
+        y = (y | (y << 4)) & 0x0F0F;
+        y = (y | (y << 2)) & 0x3333;
+        y = (y | (y << 1)) & 0x5555;
+        y = y | (y << 1);
+        ((y >> 8) as u8, (y & 0xFF) as u8)
+    }
+
+    // Private function to execute DXY0 for SUPER-CHIP 1.1 emulation level (draws a 2-byte wide by 16-byte
+    // high sprite, instead of the usual 1*N sprite)
+    fn execute_DXY0_superchip11(&mut self, x: usize, y: usize) -> Result<u64, ErrorDetail> {
+        // Read the sprite to draw as a 32-byte array slice at memory location
+        // pointed to by the index register
+        let sprite: &[u8] = self.memory.read_bytes(self.index_register as usize, 32)?;
+        let (rows_with_collisions, rows_clipped) = self.frame_buffer.draw_sprite(
+            self.variable_registers[x] as usize,
+            self.variable_registers[y] as usize,
+            sprite,
+            true,
+        )?;
+        // Set Vf to the number of rows that either underwent collision or were clipped off the bottom
+        // of the screen
+        self.variable_registers[0xF] = rows_with_collisions + rows_clipped;
+        Ok(0)
     }
 
     /// Executes the EX9E instruction - SKP Vx
