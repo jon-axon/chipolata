@@ -108,6 +108,7 @@ impl Display {
             false => sprite.len(),
         };
         // Determine whether the sprite must be clipped due to overflowing the bottom of the display
+        let y_start_pixel: usize = y_start_pixel % self.column_size_pixels;
         let pixel_rows_to_draw: usize = cmp::min(
             sprite_height,
             self.column_size_pixels - cmp::min(self.column_size_pixels, y_start_pixel),

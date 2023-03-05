@@ -254,6 +254,9 @@ impl Processor {
         }
         // Set Vx = Vx | Vy
         self.variable_registers[x] = self.variable_registers[x] | self.variable_registers[y];
+        if let EmulationLevel::Chip8 { .. } = self.emulation_level {
+            self.variable_registers[0xF] = 0;
+        }
         Ok(CYCLES)
     }
 
@@ -269,6 +272,9 @@ impl Processor {
         }
         // Set Vx = Vx & Vy
         self.variable_registers[x] = self.variable_registers[x] & self.variable_registers[y];
+        if let EmulationLevel::Chip8 { .. } = self.emulation_level {
+            self.variable_registers[0xF] = 0;
+        }
         Ok(CYCLES)
     }
 
@@ -284,6 +290,9 @@ impl Processor {
         }
         // Set Vx = Vx ^ Vy
         self.variable_registers[x] = self.variable_registers[x] ^ self.variable_registers[y];
+        if let EmulationLevel::Chip8 { .. } = self.emulation_level {
+            self.variable_registers[0xF] = 0;
+        }
         Ok(CYCLES)
     }
 
@@ -348,13 +357,14 @@ impl Processor {
             // CHIP-48 and SUPER-CHIP 1.1 ignore Vy
             EmulationLevel::Chip48 | EmulationLevel::SuperChip11 => {}
         }
-        // Check if least significant bit of Vx is 1; if so set Vf to 1 otherwise 0
-        self.variable_registers[0xF] = match self.variable_registers[x] & 0x01 == 0x01 {
+        // Check if least significant bit of Vx is 1; if so at the end we set Vf to 1 otherwise 0
+        let flag_value: u8 = match self.variable_registers[x] & 0x01 == 0x01 {
             true => 1,
             false => 0,
         };
         // Bitshift the value in Vx right by one bit (i.e. divide Vx by 2) then re-assign to Vx
         self.variable_registers[x] = self.variable_registers[x] >> 1;
+        self.variable_registers[0xF] = flag_value;
         Ok(CYCLES)
     }
 
@@ -397,13 +407,14 @@ impl Processor {
             // CHIP-48 and SUPER-CHIP 1.1 ignore Vy
             EmulationLevel::Chip48 | EmulationLevel::SuperChip11 => {}
         }
-        // Check if most significant bit of Vx is 1; if so set Vf to 1 otherwise 0
-        self.variable_registers[0xF] = match self.variable_registers[x] & 0x80 == 0x80 {
+        // Check if most significant bit of Vx is 1; if so at the end we set Vf to 1 otherwise 0
+        let flag_value: u8 = match self.variable_registers[x] & 0x80 == 0x80 {
             true => 1,
             false => 0,
         };
         // Bitshift the value in Vx left by one bit (i.e. multiply Vx by 2) then assign to Vx
         self.variable_registers[x] = self.variable_registers[x] << 1;
+        self.variable_registers[0xF] = flag_value;
         Ok(CYCLES)
     }
 
@@ -583,12 +594,19 @@ impl Processor {
             &sprite_left,
             false,
         )?;
-        let (rows_with_collisions_right, _) = self.frame_buffer.draw_sprite(
-            (self.variable_registers[x] as usize * 2) + 8,
-            self.variable_registers[y] as usize * 2,
-            &sprite_right,
-            false,
-        )?;
+        // We cannot draw the right-hand sprite if it will wrap; instead we must clip
+        let mut rows_with_collisions_right: u8 = 0;
+        if ((self.variable_registers[x] as usize * 2 / 8) + 1)
+            % self.frame_buffer.get_row_size_bytes()
+            != 0
+        {
+            (rows_with_collisions_right, _) = self.frame_buffer.draw_sprite(
+                (self.variable_registers[x] as usize * 2) + 8,
+                self.variable_registers[y] as usize * 2,
+                &sprite_right,
+                false,
+            )?;
+        }
         // Finally, set Vf according to whether any collisions occurred
         self.variable_registers[0xF] =
             match rows_with_collisions_left + rows_with_collisions_right > 0 {
