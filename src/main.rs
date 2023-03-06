@@ -37,7 +37,7 @@ impl ChipolataApp {
         let mut options: Options = Options::default();
         // options.processor_speed_hertz = 2500;
         // options.emulation_level = EmulationLevel::SuperChip11;
-        options.processor_speed_hertz = 2500;
+        options.processor_speed_hertz = 1800;
         options.emulation_level = EmulationLevel::Chip8 {
             memory_limit_2k: false,
             variable_cycle_timing: false,

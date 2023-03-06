@@ -508,7 +508,28 @@ impl Processor {
             return Err(ErrorDetail::OperandsOutOfBounds { operands });
         }
         match self.emulation_level {
-            EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
+            EmulationLevel::Chip8 { .. } => {
+                // When this instruction is executed from "Idle", we must first wait for the next
+                // vblank interrupt; during this time our status will be "WaitingforVBlank".  When
+                // the interrupt occurs, status will change to "ReadyToDraw", and we can proceed.
+                // Immediately following the draw completion, status returns to "Idle".
+                match self.vblank_status {
+                    VBlankStatus::Idle => {
+                        self.vblank_status = VBlankStatus::WaitingForVBlank;
+                        self.program_counter -= 2;
+                        Ok(0)
+                    }
+                    VBlankStatus::WaitingForVBlank => {
+                        self.program_counter -= 2;
+                        Ok(0)
+                    }
+                    VBlankStatus::ReadyToDraw => {
+                        self.vblank_status = VBlankStatus::Idle;
+                        self.execute_DXYN_chip8(x, y, n)
+                    }
+                }
+            }
+            EmulationLevel::Chip48 => {
                 self.execute_DXYN_chip8(x, y, n) // delegate to standard CHIP-8 method
             }
             EmulationLevel::SuperChip11 => {
@@ -523,10 +544,10 @@ impl Processor {
 
     // Private function to execute DXYN for CHIP-8 / CHIP-48 emulation level
     fn execute_DXYN_chip8(&mut self, x: usize, y: usize, n: u8) -> Result<u64, ErrorDetail> {
-        // Base timing is decode time plus lowest possible execute and lowest possible idle
-        const BASE_CYCLES: u64 = 68 + 170 + 2355;
+        // Base timing is decode time plus lowest possible execute
+        // Idle time is handled separately by vblank interrupt
+        const BASE_CYCLES: u64 = 68 + 170;
         const MAX_EXTRA_EXECUTE_CYCLES: u64 = 3812 - 170;
-        const MAX_EXTRA_IDLE_CYCLES: u64 = 3666 - 2355;
         // Read the sprite to draw as an N-byte array slice at memory location
         // pointed to by the index register
         let sprite: &[u8] = self
@@ -555,9 +576,7 @@ impl Processor {
         };
         // Now calculate a randomised cycle execution value within possible range
         let mut rng = rand::thread_rng();
-        Ok(BASE_CYCLES
-            + rng.gen_range(0..=MAX_EXTRA_EXECUTE_CYCLES)
-            + rng.gen_range(0..=MAX_EXTRA_IDLE_CYCLES))
+        Ok(BASE_CYCLES + rng.gen_range(0..=MAX_EXTRA_EXECUTE_CYCLES))
     }
 
     // Private function to execute low-DXYN for SUPER-CHIP 1.1 emulation level

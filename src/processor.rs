@@ -20,7 +20,9 @@ mod tests; // functional unit tests
 mod timing_tests; // non-functional (timing-related) unit tests
 
 /// The number of ms that should pass inbetween decrements of delay and sound timers.
-const TIMER_DECREMENT_INTERVAL_MICROSECONDS: u128 = 16667;
+const TIMER_DECREMENT_INTERVAL_MICROSECONDS: u128 = 16666;
+/// The number of ms that should pass inbetween vblank interrupts.
+const VBLANK_INTERVAL_MICROSECONDS: u128 = 16666;
 /// The number of variable registers available.
 const VARIABLE_REGISTER_COUNT: usize = 16;
 /// The number of RPL user flags; SUPER-CHIP 1.1 emulation mode only.
@@ -104,6 +106,18 @@ pub enum StateSnapshot {
     },
 }
 
+/// An enum used to keep track of the state of the vertical blank interrupt, for accurate display
+/// emulation in CHIP-8 mode
+#[derive(Debug, PartialEq)]
+pub enum VBlankStatus {
+    // No display instruction has been processed yet this frame
+    Idle,
+    // A display instruction is queued, awaiting v-blank interrupt
+    WaitingForVBlank,
+    // THe v-blank interrupt has been set; drawing can proceed
+    ReadyToDraw,
+}
+
 /// An abstraction of the CHIP-8 processor, and the core public interface to the Chipolata crate.
 ///
 /// This struct holds representations of all CHIP-8 sub-components, and exposes methods through which
@@ -128,6 +142,8 @@ pub struct Processor {
     status: ProcessorStatus, // The current execution status of the processor
     last_timer_decrement: Instant, //  The moment the delay and sound timers were last decremented
     last_execution_cycle_complete: Instant, // The moment the execute cycle was last completed
+    last_vblank_interrupt: Instant, // CHIP-8 emulation mode only; the last vblank interrupt time
+    vblank_status: VBlankStatus, // CHIP-8 emulation mode only; state of v-blank interrupt
     // CONFIG AND SETUP FIELDS
     low_resolution_font: Font, // The font loaded into the processor (only used during initialisation)
     high_resolution_font: Option<Font>, // SUPER-CHIP 1.1 emulation mode only; the high resolution font data
@@ -169,6 +185,8 @@ impl Processor {
             status: ProcessorStatus::StartingUp,
             last_timer_decrement: Instant::now(),
             last_execution_cycle_complete: Instant::now(),
+            last_vblank_interrupt: Instant::now(),
+            vblank_status: VBlankStatus::Idle,
             low_resolution_font: low_res_font,
             high_resolution_font: high_res_font,
             program: program,
@@ -393,10 +411,23 @@ impl Processor {
         execution_duration
     }
 
-    /// Checks if the required time has passed since the timers were last decremented
-    /// and if so, decrements them
+    /// Checks if the required time has passed since the sound and delay timers were last decremented
+    /// and if so, decrements them.  Also counts down to vblank interrupt.
     fn decrement_timers(&mut self) {
-        // Nothing to do unless timers are running
+        // If in Chip8 emulation mode, check the vblank interrupt timer and set interrupt accordingly
+        if let EmulationLevel::Chip8 {
+            memory_limit_2k: _,
+            variable_cycle_timing: _,
+        } = self.emulation_level
+        {
+            if self.last_vblank_interrupt.elapsed().as_micros() >= VBLANK_INTERVAL_MICROSECONDS {
+                if let VBlankStatus::WaitingForVBlank = self.vblank_status {
+                    self.vblank_status = VBlankStatus::ReadyToDraw;
+                }
+                self.last_vblank_interrupt = Instant::now();
+            }
+        }
+        // Nothing to do for delay and sound timers unless timers are running
         if (self.delay_timer | self.sound_timer) > 0x0 {
             // Check how long it has been since the timers were last decremented; if the interval
             // is greater than the specified threshold then we should decrement again

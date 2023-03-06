@@ -297,6 +297,22 @@ fn test_decrement_timers_stopped() {
 }
 
 #[test]
+fn test_decrement_vblankinterrupt() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.vblank_status = VBlankStatus::WaitingForVBlank;
+    let mut duration: Duration = Duration::from_micros(VBLANK_INTERVAL_MICROSECONDS as u64 - 100);
+    let mut last_time: Instant = Instant::now() - duration;
+    processor.last_vblank_interrupt = last_time;
+    processor.decrement_timers();
+    assert_eq!(processor.vblank_status, VBlankStatus::WaitingForVBlank);
+    duration = Duration::from_micros(VBLANK_INTERVAL_MICROSECONDS as u64 + 100);
+    last_time = Instant::now() - duration;
+    processor.last_vblank_interrupt = last_time;
+    processor.decrement_timers();
+    assert_eq!(processor.vblank_status, VBlankStatus::ReadyToDraw);
+}
+
+#[test]
 fn test_execute_004B() {
     let mut processor: Processor = setup_test_processor_chip8();
     assert_eq!(
@@ -987,6 +1003,15 @@ fn test_execute_8XY6_0_shifted_superchip11_mode() {
 }
 
 #[test]
+fn test_execute_8XY6_Vf() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.variable_registers[0xF] = 0xFF;
+    processor.variable_registers[0x7] = 0xFF;
+    processor.variable_registers[0xF] = 0x44;
+    assert!(processor.execute_8XY6(0xF, 0x7).is_ok() && processor.variable_registers[0xF] == 0x01);
+}
+
+#[test]
 fn test_execute_8XY6_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
     let mut operands: HashMap<String, usize> = HashMap::new();
@@ -1084,6 +1109,15 @@ fn test_execute_8XYE_0_shifted() {
             && processor.variable_registers[0xE] == 0xC4
             && processor.variable_registers[0xF] == 0x00
     );
+}
+
+#[test]
+fn test_execute_8XYE_Vf() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.variable_registers[0xF] = 0xFF;
+    processor.variable_registers[0x7] = 0xFF;
+    processor.variable_registers[0xF] = 0x44;
+    assert!(processor.execute_8XYE(0xF, 0x7).is_ok() && processor.variable_registers[0xF] == 0x01);
 }
 
 #[test]
@@ -1221,6 +1255,41 @@ fn fill_row(display: &mut Display, y: usize) {
 }
 
 #[test]
+fn test_execute_DXYN_Idle_to_Waiting() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.vblank_status = VBlankStatus::Idle;
+    processor.last_vblank_interrupt = Instant::now();
+    processor.execute_DXYN(0x3, 0xA, 1).unwrap();
+    assert_eq!(processor.vblank_status, VBlankStatus::WaitingForVBlank);
+}
+
+#[test]
+fn test_execute_DXYN_Waiting_to_Waiting() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.vblank_status = VBlankStatus::WaitingForVBlank;
+    processor.last_vblank_interrupt = Instant::now();
+    processor.execute_DXYN(0x3, 0xA, 1).unwrap();
+    assert_eq!(processor.vblank_status, VBlankStatus::WaitingForVBlank);
+}
+
+#[test]
+fn test_execute_DXYN_Ready_To_Idle() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.index_register = processor.font_start_address as u16;
+    let sprite: [u8; 1] = [0xFF]; // create single-byte sprite with all pixels on
+    processor
+        .memory
+        .write_bytes(processor.font_start_address, &sprite)
+        .unwrap(); // write sprite to memory at default font location
+    processor.variable_registers[0x3] = 0x8; // set V3 to 0 (X coordinate)
+    processor.variable_registers[0xA] = 0x1; // set V10 to 1 (Y coordinate)
+    processor.vblank_status = VBlankStatus::ReadyToDraw;
+    processor.last_vblank_interrupt = Instant::now();
+    processor.execute_DXYN(0x3, 0xA, 1).unwrap();
+    assert_eq!(processor.vblank_status, VBlankStatus::Idle);
+}
+
+#[test]
 fn test_execute_DXYN_pixel_turned_off() {
     let mut processor: Processor = setup_test_processor_chip8();
     fill_row(&mut processor.frame_buffer, 0x1); // all display pixels on in second row
@@ -1234,6 +1303,7 @@ fn test_execute_DXYN_pixel_turned_off() {
         .unwrap(); // write sprite to memory at default font location
     processor.variable_registers[0x3] = 0x8; // set V3 to 0 (X coordinate)
     processor.variable_registers[0xA] = 0x1; // set V10 to 1 (Y coordinate)
+    processor.vblank_status = VBlankStatus::ReadyToDraw;
     processor.execute_DXYN(0x3, 0xA, 1).unwrap();
     assert_eq!(processor.variable_registers[0xF], 0x1); // at least one pixel will flip if successful
 }
@@ -1251,6 +1321,7 @@ fn test_execute_DXYN_no_pixel_turned_off() {
         .unwrap(); // write sprite to memory at default font location
     processor.variable_registers[0x3] = 0x0; // set V3 to 0 (X coordinate)
     processor.variable_registers[0xA] = 0x1; // set V10 to 1 (Y coordinate)
+    processor.vblank_status = VBlankStatus::ReadyToDraw;
     processor.execute_DXYN(0x3, 0xA, 1).unwrap();
     assert_eq!(processor.variable_registers[0xF], 0x0); // no pixel will flip if successful
 }

@@ -298,9 +298,10 @@ fn test_execute_CXNN_timing() {
 
 #[test]
 fn test_execute_DXYN_timing() {
-    const MIN_CYCLES: u64 = 68 + 170 + 2355;
-    const MAX_CYCLES: u64 = MIN_CYCLES + 3812 - 170 + 3666 - 2355;
+    const MIN_CYCLES: u64 = 68 + 170;
+    const MAX_CYCLES: u64 = MIN_CYCLES + 3812 - 170;
     let mut processor: Processor = setup_test_processor_variable_timing();
+    processor.vblank_status = VBlankStatus::ReadyToDraw; // assume we are ready to proceed
     let cycles: u64 = processor.execute_DXYN(0x3, 0xA, 1).unwrap();
     assert!(cycles >= MIN_CYCLES && cycles <= MAX_CYCLES);
 }
