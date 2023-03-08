@@ -10,7 +10,6 @@ use super::options::Options;
 use super::program::Program;
 use super::stack::Stack;
 use rand::Rng;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 mod execute; // separate sub-module for all the instruction execution methods
@@ -46,7 +45,8 @@ pub enum EmulationLevel {
     /// Re-implemented CHIP-8 interpreter for the HP48 graphing calculators
     Chip48,
     /// Version 1.1 of the SUPER-CHIP interpreter for HP48S and HP48SX graphing calculators
-    SuperChip11,
+    /// Optionally includes OCTO-specific SCHIP instruction quirks
+    SuperChip11 { octo_compatibility_mode: bool },
 }
 
 /// An enum used internally within the Chipolata crate to keep track of the processor
@@ -139,6 +139,8 @@ pub struct Processor {
     high_resolution_mode: bool, // SUPER-CHIP 1.1 emulation mode only; true when when in high-res mode
     // ADDITIONAL STATE FIELDS
     keystate: KeyState, // A representation of the state (pressed/not pressed) of each key
+    waiting_original_keystate: KeyState, // Keystate as at the start of an FX0A instruction
+    keys_pressed_since_wait: Vec<u8>, // Keys pressed (but not released) during FX0A wait
     status: ProcessorStatus, // The current execution status of the processor
     last_timer_decrement: Instant, //  The moment the delay and sound timers were last decremented
     last_execution_cycle_complete: Instant, // The moment the execute cycle was last completed
@@ -166,7 +168,12 @@ impl Processor {
     pub fn initialise_and_load(program: Program, options: Options) -> Result<Self, ChipolataError> {
         let low_res_font: Font = Font::default_low_resolution();
         let high_res_font: Option<Font> = match options.emulation_level {
-            EmulationLevel::SuperChip11 => Some(Font::default_high_resolution()),
+            EmulationLevel::SuperChip11 {
+                octo_compatibility_mode: true,
+            } => Some(Font::octo_high_resolution()),
+            EmulationLevel::SuperChip11 {
+                octo_compatibility_mode: false,
+            } => Some(Font::default_high_resolution()),
             _ => None,
         };
         let mut processor = Processor {
@@ -182,6 +189,8 @@ impl Processor {
             cycles: 0,
             high_resolution_mode: false,
             keystate: KeyState::new(),
+            waiting_original_keystate: KeyState::new(),
+            keys_pressed_since_wait: Vec::new(),
             status: ProcessorStatus::StartingUp,
             last_timer_decrement: Instant::now(),
             last_execution_cycle_complete: Instant::now(),
@@ -340,8 +349,19 @@ impl Processor {
     /// Executes one iteration of the Chipolata fetch -> decode -> execute cycle.  Returns a boolean
     /// indicating whether the display frame buffer was updated this cycle.
     pub fn execute_cycle(&mut self) -> Result<bool, ChipolataError> {
-        // Set processor state to Running
-        self.status = ProcessorStatus::Running;
+        // Change processor status if appropriate
+        match self.status {
+            ProcessorStatus::ProgramLoaded => self.status = ProcessorStatus::Running,
+            ProcessorStatus::Running | ProcessorStatus::WaitingForKeypress => {
+                // no change
+            }
+            ProcessorStatus::StartingUp
+            | ProcessorStatus::Initialised
+            | ProcessorStatus::Completed
+            | ProcessorStatus::Crashed => {
+                return Err(self.crash(ErrorDetail::UnknownError));
+            }
+        }
         // Increment the cycles counter
         self.cycles += 1;
         // Decrement the delay and sound timers, if appropriate

@@ -31,7 +31,7 @@ impl Stack {
             stack_size_limit: match emulation_level {
                 EmulationLevel::Chip8 { .. } => CHIP8_STACK_DEPTH,
                 EmulationLevel::Chip48 => CHIP48_STACK_DEPTH,
-                EmulationLevel::SuperChip11 => SUPERCHIP11_STACK_DEPTH,
+                EmulationLevel::SuperChip11 { .. } => SUPERCHIP11_STACK_DEPTH,
             },
         }
     }
@@ -122,7 +122,9 @@ mod tests {
 
     #[test]
     fn test_push_full_superchip11_mode_error() {
-        let mut stack: Stack = Stack::new(EmulationLevel::SuperChip11);
+        let mut stack: Stack = Stack::new(EmulationLevel::SuperChip11 {
+            octo_compatibility_mode: false,
+        });
         stack.pointer = SUPERCHIP11_STACK_DEPTH;
         assert_eq!(stack.push(0xFF).unwrap_err(), ErrorDetail::PushFullStack);
     }

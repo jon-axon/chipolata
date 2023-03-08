@@ -1,6 +1,5 @@
 use super::*;
-use crate::program::Program;
-use std::time::{Duration, Instant};
+use std::collections::HashMap;
 
 fn setup_test_processor_chip8() -> Processor {
     let program: Program = Program::default();
@@ -17,7 +16,9 @@ fn setup_test_processor_chip48() -> Processor {
 fn setup_test_processor_superchip11() -> Processor {
     let program: Program = Program::default();
     let mut options: Options = Options::default();
-    options.emulation_level = EmulationLevel::SuperChip11;
+    options.emulation_level = EmulationLevel::SuperChip11 {
+        octo_compatibility_mode: false,
+    };
     Processor::initialise_and_load(program, options).unwrap()
 }
 
@@ -1423,9 +1424,10 @@ fn test_execute_DXY0_superchip11() {
     processor.variable_registers[0xA] = (display_rows - 3) as u8;
     // This operation should cause pixel collison on two rows (penultimate and final but not third last)
     // and should also cause clipping of 13 rows (16-byte high sprite with only 3 rows on-screen)
+    // however clipping is currently disabled by design, so 0 for this component
     assert!(
         processor.execute_DXYN(0x3, 0xA, 0).unwrap() == 0
-            && processor.variable_registers[0xF] == 0xF // 2 + 13 = 15 = 0xF
+            && processor.variable_registers[0xF] == 0x2 // 2 (if not disabled would be 2 + 13 = 15 = 0xF)
     );
 }
 
@@ -1570,6 +1572,7 @@ fn test_execute_FX07_invalid_register_x_error() {
 fn test_execute_FX0A_block() {
     let mut processor: Processor = setup_test_processor_chip8();
     processor.program_counter = 0xC5;
+    processor.status = ProcessorStatus::Running;
     processor.execute_FX0A(0x3).unwrap();
     assert!(
         processor.status == ProcessorStatus::WaitingForKeypress
@@ -1578,27 +1581,62 @@ fn test_execute_FX0A_block() {
 }
 
 #[test]
-fn test_execute_FX0A_no_block() {
+fn test_execute_FX0A_press_and_release() {
     let mut processor: Processor = setup_test_processor_chip8();
-    processor.keystate.set_key_status(0xB, true).unwrap();
     processor.status = ProcessorStatus::Running;
     processor.program_counter = 0xC5;
     processor.execute_FX0A(0x3).unwrap();
+    assert_eq!(processor.status, ProcessorStatus::WaitingForKeypress);
+    processor.keystate.set_key_status(0xB, true).unwrap(); // Simulate key press
+    processor.execute_FX0A(0x3).unwrap();
+    assert_eq!(processor.status, ProcessorStatus::WaitingForKeypress);
+    processor.keystate.set_key_status(0xB, false).unwrap(); // Simulate key release
+    processor.execute_FX0A(0x3).unwrap();
     assert!(
         processor.status == ProcessorStatus::Running
-            && processor.program_counter == 0xC5
+            && processor.program_counter == 0xC1
             && processor.variable_registers[0x3] == 0xB
     );
 }
 
 #[test]
-fn test_execute_FX0A_resume() {
+fn test_execute_FX0A_press_and_release_multiple() {
     let mut processor: Processor = setup_test_processor_chip8();
-    processor.keystate.set_key_status(0xB, true).unwrap();
-    processor.status = ProcessorStatus::WaitingForKeypress;
+    processor.status = ProcessorStatus::Running;
+    processor.program_counter = 0xC5;
+    processor.execute_FX0A(0x3).unwrap();
+    assert_eq!(processor.status, ProcessorStatus::WaitingForKeypress);
+    processor.keystate.set_key_status(0xA, true).unwrap(); // Simulate key press
+    processor.keystate.set_key_status(0xB, true).unwrap(); // Simulate key press
+    processor.execute_FX0A(0x3).unwrap();
+    assert_eq!(processor.status, ProcessorStatus::WaitingForKeypress);
+    processor.keystate.set_key_status(0xB, false).unwrap(); // Simulate key release
     processor.execute_FX0A(0x3).unwrap();
     assert!(
-        processor.status == ProcessorStatus::Running && processor.variable_registers[0x3] == 0xB
+        processor.status == ProcessorStatus::Running
+            && processor.program_counter == 0xC1
+            && processor.variable_registers[0x3] == 0xB
+    );
+}
+
+#[test]
+fn test_execute_FX0A_press_and_release_existing_keys() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.status = ProcessorStatus::Running;
+    processor.set_key_status(0x5, true).unwrap();
+    processor.set_key_status(0x9, true).unwrap();
+    processor.program_counter = 0xC5;
+    processor.execute_FX0A(0x3).unwrap();
+    assert_eq!(processor.status, ProcessorStatus::WaitingForKeypress);
+    processor.keystate.set_key_status(0xB, true).unwrap(); // Simulate key press
+    processor.execute_FX0A(0x3).unwrap();
+    assert_eq!(processor.status, ProcessorStatus::WaitingForKeypress);
+    processor.keystate.set_key_status(0xB, false).unwrap(); // Simulate key release
+    processor.execute_FX0A(0x3).unwrap();
+    assert!(
+        processor.status == ProcessorStatus::Running
+            && processor.program_counter == 0xC1
+            && processor.variable_registers[0x3] == 0xB
     );
 }
 

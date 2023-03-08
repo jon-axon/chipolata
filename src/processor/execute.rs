@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 impl Processor {
     /// Executes the 004B instruction - [turn on COSMAC VIP display]
@@ -13,7 +14,7 @@ impl Processor {
     ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
     pub(super) fn execute_00CN(&mut self, n: u8) -> Result<u64, ErrorDetail> {
         match self.emulation_level {
-            EmulationLevel::SuperChip11 => {
+            EmulationLevel::SuperChip11 { .. } => {
                 self.frame_buffer.scroll_display_down(n)?;
                 Ok(0)
             }
@@ -46,7 +47,7 @@ impl Processor {
     ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
     pub(super) fn execute_00FB(&mut self) -> Result<u64, ErrorDetail> {
         match self.emulation_level {
-            EmulationLevel::SuperChip11 => {
+            EmulationLevel::SuperChip11 { .. } => {
                 self.frame_buffer.scroll_display_right()?;
                 Ok(0)
             }
@@ -61,7 +62,7 @@ impl Processor {
     ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
     pub(super) fn execute_00FC(&mut self) -> Result<u64, ErrorDetail> {
         match self.emulation_level {
-            EmulationLevel::SuperChip11 => {
+            EmulationLevel::SuperChip11 { .. } => {
                 self.frame_buffer.scroll_display_left()?;
                 Ok(0)
             }
@@ -76,7 +77,7 @@ impl Processor {
     ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
     pub(super) fn execute_00FD(&mut self) -> Result<u64, ErrorDetail> {
         match self.emulation_level {
-            EmulationLevel::SuperChip11 => {
+            EmulationLevel::SuperChip11 { .. } => {
                 self.status = ProcessorStatus::Completed;
                 Ok(0)
             }
@@ -91,8 +92,14 @@ impl Processor {
     ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
     pub(super) fn execute_00FE(&mut self) -> Result<u64, ErrorDetail> {
         match self.emulation_level {
-            EmulationLevel::SuperChip11 => {
+            EmulationLevel::SuperChip11 {
+                octo_compatibility_mode,
+            } => {
                 self.high_resolution_mode = false;
+                if octo_compatibility_mode {
+                    // only clear screen in OCTO mode
+                    self.frame_buffer.clear();
+                }
                 Ok(0)
             }
             EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
@@ -106,8 +113,14 @@ impl Processor {
     ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
     pub(super) fn execute_00FF(&mut self) -> Result<u64, ErrorDetail> {
         match self.emulation_level {
-            EmulationLevel::SuperChip11 => {
+            EmulationLevel::SuperChip11 {
+                octo_compatibility_mode,
+            } => {
                 self.high_resolution_mode = true;
+                if octo_compatibility_mode {
+                    // only clear screen in OCTO mode
+                    self.frame_buffer.clear();
+                }
                 Ok(0)
             }
             EmulationLevel::Chip8 { .. } | EmulationLevel::Chip48 => {
@@ -309,12 +322,13 @@ impl Processor {
         // Cast Vx and Vy as u16 (to allow overflow beyond u8 range), add, and store in temp variable
         let result: u16 = (self.variable_registers[x] as u16) + (self.variable_registers[y] as u16);
         // Check whether sum has overflowed beyond 8 bits; if so set Vf to 1 otherwise 0
-        self.variable_registers[0xF] = match result > 0xFF {
+        let flag_value: u8 = match result > 0xFF {
             true => 1,
             false => 0,
         };
         // Save the low 8 bits of result to Vx
         self.variable_registers[x] = (result & 0xFF) as u8;
+        self.variable_registers[0xF] = flag_value;
         Ok(CYCLES)
     }
 
@@ -330,13 +344,15 @@ impl Processor {
         }
         // Cast Vx and Vy as i16 (to allow signed result), subtract, and store in temp variable
         let result: i16 = (self.variable_registers[x] as i16) - (self.variable_registers[y] as i16);
+
         // Check whether subtraction result is negative; if so set Vf to 0 otherwise 1
-        self.variable_registers[0xF] = match result < 0x0 {
+        let flag_value: u8 = match result < 0x0 {
             true => 0,
             false => 1,
         };
         // Save the low 8 bits of result to Vx
         self.variable_registers[x] = (result & 0xFF) as u8;
+        self.variable_registers[0xF] = flag_value;
         Ok(CYCLES)
     }
 
@@ -355,7 +371,7 @@ impl Processor {
             // CHIP-8 first sets Vx to Vy
             EmulationLevel::Chip8 { .. } => self.variable_registers[x] = self.variable_registers[y],
             // CHIP-48 and SUPER-CHIP 1.1 ignore Vy
-            EmulationLevel::Chip48 | EmulationLevel::SuperChip11 => {}
+            EmulationLevel::Chip48 | EmulationLevel::SuperChip11 { .. } => {}
         }
         // Check if least significant bit of Vx is 1; if so at the end we set Vf to 1 otherwise 0
         let flag_value: u8 = match self.variable_registers[x] & 0x01 == 0x01 {
@@ -381,12 +397,13 @@ impl Processor {
         // Cast Vx and Vy as i16 (to allow signed result), subtract, and store in temp variable
         let result: i16 = (self.variable_registers[y] as i16) - (self.variable_registers[x] as i16);
         // Check whether subtraction result is negative; if so set Vf to 0 otherwise 1
-        self.variable_registers[0xF] = match result < 0x0 {
+        let flag_value: u8 = match result < 0x0 {
             true => 0,
             false => 1,
         };
         // Save the low 8 bits of result to Vx
         self.variable_registers[x] = (result & 0xFF) as u8;
+        self.variable_registers[0xF] = flag_value;
         Ok(CYCLES)
     }
 
@@ -405,7 +422,7 @@ impl Processor {
             // CHIP-8 first sets Vx to Vy
             EmulationLevel::Chip8 { .. } => self.variable_registers[x] = self.variable_registers[y],
             // CHIP-48 and SUPER-CHIP 1.1 ignore Vy
-            EmulationLevel::Chip48 | EmulationLevel::SuperChip11 => {}
+            EmulationLevel::Chip48 | EmulationLevel::SuperChip11 { .. } => {}
         }
         // Check if most significant bit of Vx is 1; if so at the end we set Vf to 1 otherwise 0
         let flag_value: u8 = match self.variable_registers[x] & 0x80 == 0x80 {
@@ -461,7 +478,7 @@ impl Processor {
                 // Set the program counter to NNN plus the value in register V0
                 nnn + (self.variable_registers[0] as u16)
             }
-            EmulationLevel::Chip48 | EmulationLevel::SuperChip11 => {
+            EmulationLevel::Chip48 | EmulationLevel::SuperChip11 { .. } => {
                 // isolate the first hex digit
                 let x: u16 = (nnn & 0x0F00) >> 8;
                 // Set the program counter to XNN plus the value in register VX
@@ -532,11 +549,14 @@ impl Processor {
             EmulationLevel::Chip48 => {
                 self.execute_DXYN_chip8(x, y, n) // delegate to standard CHIP-8 method
             }
-            EmulationLevel::SuperChip11 => {
-                match (self.high_resolution_mode, n) {
-                    (true, 0) => self.execute_DXY0_superchip11(x, y), // special behaviour where n = 0
-                    (true, ..) => self.execute_DXYN_chip8(x, y, n), // delegate to standard CHIP-8 method
+            EmulationLevel::SuperChip11 {
+                octo_compatibility_mode,
+            } => {
+                match (self.high_resolution_mode, octo_compatibility_mode, n) {
+                    (true, _, 0) => self.execute_DXY0_superchip11(x, y), // special behaviour where n = 0
+                    (false, true, 0) => self.execute_DXY0_superchip11_low_res(x, y), // OCTO-only behaviour
                     (false, ..) => self.execute_DXYN_superchip11_low_res(x, y, n),
+                    (true, ..) => self.execute_DXYN_chip8(x, y, n), // delegate to standard CHIP-8 method
                 }
             }
         }
@@ -565,7 +585,7 @@ impl Processor {
         // of rows that either underwent collision or were clipped off the bottom of the screen
         // Otherwise, set Vf to 1 if collision occurred in at least one row, and 0 if it did not.
         self.variable_registers[0xF] = match (self.emulation_level, self.high_resolution_mode) {
-            (EmulationLevel::SuperChip11, true) => rows_with_collisions + rows_clipped,
+            (EmulationLevel::SuperChip11 { .. }, true) => rows_with_collisions + rows_clipped,
             _ => {
                 if rows_with_collisions > 0 {
                     0x1 // collisions occurred
@@ -648,7 +668,7 @@ impl Processor {
     }
 
     // Private function to execute DXY0 for SUPER-CHIP 1.1 emulation level (draws a 2-byte wide by 16-byte
-    // high sprite, instead of the usual 1*N sprite)
+    // high sprite, instead of the usual 1*N sprite) for high-resolution mode
     fn execute_DXY0_superchip11(&mut self, x: usize, y: usize) -> Result<u64, ErrorDetail> {
         // Read the sprite to draw as a 32-byte array slice at memory location
         // pointed to by the index register
@@ -659,9 +679,71 @@ impl Processor {
             sprite,
             true,
         )?;
-        // Set Vf to the number of rows that either underwent collision or were clipped off the bottom
-        // of the screen
+        // Set Vf to the number of rows that underwent collision or were clipped off the bottom of
+        // the screen
         self.variable_registers[0xF] = rows_with_collisions + rows_clipped;
+        Ok(0)
+    }
+
+    // Private function to execute DXY0 for SUPER-CHIP 1.1 emulation level (draws a 2-byte wide by 16-byte
+    // high sprite, instead of the usual 1*N sprite) for low-resolution mode - OCTO settings only
+    fn execute_DXY0_superchip11_low_res(&mut self, x: usize, y: usize) -> Result<u64, ErrorDetail> {
+        // To simulate low-resolution mode whilst at the SUPER-CHIP 1.1 emulation level we use the
+        // normal display draw_sprite() method, but must explode every pixel to a 2x2 pixel.
+        // First read the double-width sprite to draw as a 32-byte array slice at memory location
+        // pointed to by the index register
+        let sprite: &[u8] = self.memory.read_bytes(self.index_register as usize, 32)?;
+        // Now declare two vectors to represent the left and right portions of the high-res sprite
+        let mut sprite_left: Vec<u8> = Vec::new();
+        let mut sprite_right: Vec<u8> = Vec::new();
+        // Iterate through each byte in the original sprite, duplicating bits in each row and assigning
+        // the new bytes in each case to left and right sprite vector accordingly. Add each value
+        // to the new sprite vectors TWICE, as we are creating two rows per original row (2x2)
+        let mut i: usize = 0;
+        for byte in sprite {
+            let (left_byte, right_byte) = Processor::duplicate_bits(*byte);
+            if i % 2 == 0 {
+                // for even number bytes, assign both duplicated bytes to left sprite
+                sprite_left.push(left_byte);
+                sprite_left.push(right_byte);
+                sprite_left.push(left_byte);
+                sprite_left.push(right_byte);
+            } else {
+                // for odd number bytes, assign both duplicated bytes to right sprite
+                sprite_right.push(left_byte);
+                sprite_right.push(right_byte);
+                sprite_right.push(left_byte);
+                sprite_right.push(right_byte);
+            }
+            i += 1;
+        }
+        // Now draw each of these two new sprites in turn at twice the specified X and Y coords
+        // The right-hand sprite should start 8 pixels further right i.e. X + 8
+        let (rows_with_collisions_left, _) = self.frame_buffer.draw_sprite(
+            self.variable_registers[x] as usize * 2,
+            self.variable_registers[y] as usize * 2,
+            &sprite_left,
+            true,
+        )?;
+        // We cannot draw the right-hand sprite if it will wrap; instead we must clip
+        let mut rows_with_collisions_right: u8 = 0;
+        if ((self.variable_registers[x] as usize * 2 / 8) + 3)
+            % self.frame_buffer.get_row_size_bytes()
+            != 0
+        {
+            (rows_with_collisions_right, _) = self.frame_buffer.draw_sprite(
+                (self.variable_registers[x] as usize * 2) + 16,
+                self.variable_registers[y] as usize * 2,
+                &sprite_right,
+                true,
+            )?;
+        }
+        // Finally, set Vf according to whether any collisions occurred
+        self.variable_registers[0xF] =
+            match rows_with_collisions_left + rows_with_collisions_right > 0 {
+                true => 0x1,
+                false => 0x0,
+            };
         Ok(0)
     }
 
@@ -681,7 +763,7 @@ impl Processor {
         if key_pressed {
             // If so, increment the program counter by 2 bytes (1 opcode)
             self.program_counter += 2;
-            self.keystate.set_key_status(key, false)?; // Set key status to unpressed to prevent immediate repeats
+            //self.keystate.set_key_status(key, false)?; // Set key status to unpressed to prevent immediate repeats
             Ok(CYCLES_IF_TRUE)
         } else {
             Ok(CYCLES_IF_FALSE)
@@ -706,7 +788,7 @@ impl Processor {
             self.program_counter += 2;
             Ok(CYCLES_IF_TRUE)
         } else {
-            self.keystate.set_key_status(key, false)?; // Set key status to unpressed to prevent immediate repeats
+            //self.keystate.set_key_status(key, false)?; // Set key status to unpressed to prevent immediate repeats
             Ok(CYCLES_IF_FALSE)
         }
     }
@@ -733,19 +815,53 @@ impl Processor {
             operands.insert("x".to_string(), x);
             return Err(ErrorDetail::OperandsOutOfBounds { operands });
         }
-        // Check whether any keys are currently pressed
-        match self.keystate.get_keys_pressed() {
-            Some(keys_pressed) => {
-                // Store the (first) pressed key value in Vx
-                self.variable_registers[x] = keys_pressed[0];
-                self.status = ProcessorStatus::Running; // ensure processor state is "Running"
-            }
-            None => {
-                // Decrement the program counter by by 2 bytes (1 opcode)
-                // i.e. keep repeating this instruction until a key press occurs
-                self.program_counter -= 2;
+        match self.status {
+            ProcessorStatus::Running => {
+                // If processor state is "Running" then this is the first call to FX0A; save current keystate
+                self.waiting_original_keystate = self.keystate.clone();
+                // Initialise the waiting key press vector
+                self.keys_pressed_since_wait = Vec::new();
                 // Set processor state to "Waiting"
                 self.status = ProcessorStatus::WaitingForKeypress;
+                // Decrement the program counter by by 2 bytes (1 opcode) repeat this instruction
+                self.program_counter -= 2;
+            }
+            ProcessorStatus::WaitingForKeypress => {
+                let keys_pressed_at_wait: Vec<u8> = self
+                    .waiting_original_keystate
+                    .get_keys_pressed()
+                    .unwrap_or(Vec::new());
+                let keys_pressed_now: Vec<u8> =
+                    self.keystate.get_keys_pressed().unwrap_or(Vec::new());
+                // Construct the vector of keys_pressed_since_wait minus keys_pressed_now
+                // If non-empty, return the first of these and stop waiting (execution continues)
+                let keys_released: Vec<u8> = self
+                    .keys_pressed_since_wait
+                    .clone()
+                    .into_iter()
+                    .filter(|key| !keys_pressed_now.contains(key))
+                    .collect();
+                if keys_released.len() > 0 {
+                    // We have a key released; stop waiting
+                    self.variable_registers[x] = keys_released[0];
+                    self.status = ProcessorStatus::Running;
+                } else {
+                    // Construct the vector of keys_pressed_now minus keys_pressed_since_wait minus
+                    // keys_pressed_at_wait i.e. anything newly-pressed this cycle.  Add to
+                    // keys_pressed_now
+                    let mut keys_newly_pressed: Vec<u8> = keys_pressed_now
+                        .into_iter()
+                        .filter(|key| !self.keys_pressed_since_wait.contains(key))
+                        .filter(|key| !keys_pressed_at_wait.contains(key))
+                        .collect();
+                    self.keys_pressed_since_wait.append(&mut keys_newly_pressed);
+                    // Decrement the program counter by by 2 bytes (1 opcode) repeat this instruction
+                    self.program_counter -= 2;
+                }
+            }
+            _ => {
+                // Invalid processor state
+                return Err(ErrorDetail::UnknownError);
             }
         }
         Ok(CYCLES)
@@ -841,7 +957,7 @@ impl Processor {
     ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
     pub(super) fn execute_FX30(&mut self, x: usize) -> Result<u64, ErrorDetail> {
         match self.emulation_level {
-            EmulationLevel::SuperChip11 => {
+            EmulationLevel::SuperChip11 { .. } => {
                 if x >= VARIABLE_REGISTER_COUNT {
                     let mut operands: HashMap<String, usize> = HashMap::new();
                     operands.insert("x".to_string(), x);
@@ -917,7 +1033,7 @@ impl Processor {
                 // CHIP-48 increments index register by one less than it should
                 self.index_register = (original_index_register + x) as u16;
             }
-            EmulationLevel::SuperChip11 => {
+            EmulationLevel::SuperChip11 { .. } => {
                 // SUPER-CHIP 1.1 does not increment the index register at all; do nothing here
             }
         }
@@ -952,7 +1068,7 @@ impl Processor {
                 // CHIP-48 increments index register by one less than it should
                 self.index_register = (original_index_register + x) as u16;
             }
-            EmulationLevel::SuperChip11 => {
+            EmulationLevel::SuperChip11 { .. } => {
                 // SUPER-CHIP 1.1 does not increment the index register at all; do nothing here
             }
         }
@@ -972,7 +1088,7 @@ impl Processor {
     ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
     pub(super) fn execute_FX75(&mut self, x: usize) -> Result<u64, ErrorDetail> {
         match self.emulation_level {
-            EmulationLevel::SuperChip11 => {
+            EmulationLevel::SuperChip11 { .. } => {
                 if x >= RPL_REGISTER_COUNT {
                     let mut operands: HashMap<String, usize> = HashMap::new();
                     operands.insert("x".to_string(), x);
@@ -994,7 +1110,7 @@ impl Processor {
     ///          [CHIP-8 / CHIP-48] this will error as an [ErrorDetail::UnknownInstruction]
     pub(super) fn execute_FX85(&mut self, x: usize) -> Result<u64, ErrorDetail> {
         match self.emulation_level {
-            EmulationLevel::SuperChip11 => {
+            EmulationLevel::SuperChip11 { .. } => {
                 if x >= RPL_REGISTER_COUNT {
                     let mut operands: HashMap<String, usize> = HashMap::new();
                     operands.insert("x".to_string(), x);

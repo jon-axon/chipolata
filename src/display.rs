@@ -56,7 +56,7 @@ impl Display {
         let column_size: usize;
         let pixels: Box<[u8]>;
         (row_size, column_size) = match emulation_level {
-            EmulationLevel::SuperChip11 => {
+            EmulationLevel::SuperChip11 { .. } => {
                 (HIGH_RES_ROW_SIZE_PIXELS / 8, HIGH_RES_COLUMN_SIZE_PIXELS)
             }
             _ => (LOW_RES_ROW_SIZE_PIXELS / 8, LOW_RES_COLUMN_SIZE_PIXELS),
@@ -114,7 +114,11 @@ impl Display {
             self.column_size_pixels - cmp::min(self.column_size_pixels, y_start_pixel),
         );
         // Number of rows clipped (to be returned from method) is sprite height minus rows to draw
-        let rows_clipped: u8 = (sprite_height - pixel_rows_to_draw) as u8;
+        // Allegedly this is used by SUPER-CHIP 1.1 however testing and further investigation suggests
+        // this is unintended, and this definitely causes issues with some games.  So, this is hardwired
+        // to 0 for now
+        //let rows_clipped: u8 = (sprite_height - pixel_rows_to_draw) as u8;
+        let rows_clipped: u8 = 0_u8;
         // Calculate the offset (in pixels) of the sprite X position relative to the start of the byte
         let x_offset = x_start_pixel % 8;
         // Calculate which horizontal display byte the sprite starts in (allowing wrapping)
@@ -324,7 +328,9 @@ mod tests {
     }
 
     fn setup_test_display_high_res() -> Display {
-        let mut display: Display = Display::new(EmulationLevel::SuperChip11);
+        let mut display: Display = Display::new(EmulationLevel::SuperChip11 {
+            octo_compatibility_mode: false,
+        });
         // Setup test display as follows:
         // 00001111 01010101 11100010  (i.e. 0F 55 E2 in hex)
         // 11110000 10101010 00011101  (i.e. F0 AA 1D in hex)
@@ -342,7 +348,9 @@ mod tests {
     }
 
     fn setup_test_display_high_res_right() -> Display {
-        let mut display: Display = Display::new(EmulationLevel::SuperChip11);
+        let mut display: Display = Display::new(EmulationLevel::SuperChip11 {
+            octo_compatibility_mode: false,
+        });
         // Setup test display as follows:
         // 00001111 01010101 11100010  (i.e. 0F 55 E2 in hex)
         // 11110000 10101010 00011101  (i.e. F0 AA 1D in hex)
@@ -360,7 +368,9 @@ mod tests {
     }
 
     fn setup_test_display_high_res_bottom() -> Display {
-        let mut display: Display = Display::new(EmulationLevel::SuperChip11);
+        let mut display: Display = Display::new(EmulationLevel::SuperChip11 {
+            octo_compatibility_mode: false,
+        });
         // Setup test display as follows (at bottom of screen)
         // At row MAX-1:  00001111 01010101   (i.e. 0F 55 in hex)
         // At row MAX:    11110000 10101010   (i.e. F0 AA in hex)
@@ -372,7 +382,9 @@ mod tests {
     }
 
     fn setup_test_display_high_res_scroll_left() -> Display {
-        let mut display: Display = Display::new(EmulationLevel::SuperChip11);
+        let mut display: Display = Display::new(EmulationLevel::SuperChip11 {
+            octo_compatibility_mode: false,
+        });
         // Setup test display as follows, for every row:
         // 00011001 00011001 .. 00011001  (i.e. 19 19 .. 19)
         for i in 0..display.get_column_size_pixels() {
@@ -384,7 +396,9 @@ mod tests {
     }
 
     fn setup_test_display_high_res_scroll_right() -> Display {
-        let mut display: Display = Display::new(EmulationLevel::SuperChip11);
+        let mut display: Display = Display::new(EmulationLevel::SuperChip11 {
+            octo_compatibility_mode: false,
+        });
         // Setup test display as follows, for every row:
         // 01110100 01110100 .. 01110100  (i.e. 74 74 .. 74)
         for i in 0..display.get_column_size_pixels() {
@@ -396,7 +410,9 @@ mod tests {
     }
 
     fn setup_test_display_high_res_scroll_down() -> Display {
-        let mut display: Display = Display::new(EmulationLevel::SuperChip11);
+        let mut display: Display = Display::new(EmulationLevel::SuperChip11 {
+            octo_compatibility_mode: false,
+        });
         // Setup test display as follows.  First row has all pixels turned on i.e. all bytes are 0xFF
         // All other rows have all pixels turned off i.e. all bytes are 0x00
         // 11111111 11111111 .. 11111111    (i.e. FF FF .. FF)
@@ -530,7 +546,7 @@ mod tests {
         // 01000110 10101010   (i.e. 46 AA in hex)
         assert!(
             rows_with_collisions == 1
-                && rows_clipped == 1
+                && rows_clipped == 0 // this is disabled; would be 1
                 && display[LOW_RES_COLUMN_SIZE_PIXELS - 2][0] == 0x0F
                 && display[LOW_RES_COLUMN_SIZE_PIXELS - 2][1] == 0x55
                 && display[LOW_RES_COLUMN_SIZE_PIXELS - 1][0] == 0x46
@@ -786,7 +802,7 @@ mod tests {
 
         assert!(
             rows_with_collisions == 1
-                && rows_clipped == 15
+                && rows_clipped == 0 // this is disabled; would be 15
                 && display[HIGH_RES_COLUMN_SIZE_PIXELS - 2][0] == 0x0F
                 && display[HIGH_RES_COLUMN_SIZE_PIXELS - 2][1] == 0x55
                 && display[HIGH_RES_COLUMN_SIZE_PIXELS - 1][0] == 0x46

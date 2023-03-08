@@ -353,6 +353,7 @@ fn test_execute_FX07_timing() {
 fn test_execute_FX0A_timing() {
     const EXPECTED_CYCLES: u64 = 19072;
     let mut processor: Processor = setup_test_processor_variable_timing();
+    processor.status = ProcessorStatus::Running;
     assert_eq!(processor.execute_FX0A(0x3).unwrap(), EXPECTED_CYCLES);
 }
 

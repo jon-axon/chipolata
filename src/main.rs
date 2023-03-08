@@ -32,16 +32,21 @@ struct ChipolataApp {
 
 impl ChipolataApp {
     pub fn new() -> Self {
-        let program_data = fs::read("roms\\tests\\chip8-test-suite.ch8").unwrap();
+        let program_data =
+        //    fs::read("F:\\Rust\\Projects\\chipolata\\roms\\superchip\\knight.ch8").unwrap();
+        //    fs::read("F:\\Rust\\Projects\\chipolata\\roms\\tests\\chip8-test-suite.ch8").unwrap();
+            fs::read("F:\\Rust\\Projects\\chipolata\\roms\\superchip\\joust").unwrap();
         let program: Program = Program::new(program_data);
         let mut options: Options = Options::default();
-        // options.processor_speed_hertz = 2500;
-        // options.emulation_level = EmulationLevel::SuperChip11;
-        options.processor_speed_hertz = 1800;
-        options.emulation_level = EmulationLevel::Chip8 {
-            memory_limit_2k: false,
-            variable_cycle_timing: false,
+        options.processor_speed_hertz = 2500;
+        options.emulation_level = EmulationLevel::SuperChip11 {
+            octo_compatibility_mode: true,
         };
+        // options.processor_speed_hertz = 2500;
+        // options.emulation_level = EmulationLevel::Chip8 {
+        //     memory_limit_2k: false,
+        //     variable_cycle_timing: false,
+        // };
         // options.processor_speed_hertz = COSMAC_VIP_PROCESSOR_SPEED_HERTZ;
         // options.emulation_level = EmulationLevel::Chip8 {
         //     memory_limit_2k: false,
