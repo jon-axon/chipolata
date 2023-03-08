@@ -10,7 +10,6 @@ use super::options::Options;
 use super::program::Program;
 use super::stack::Stack;
 use rand::Rng;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 mod execute; // separate sub-module for all the instruction execution methods
@@ -20,33 +19,40 @@ mod tests; // functional unit tests
 mod timing_tests; // non-functional (timing-related) unit tests
 
 /// The number of ms that should pass inbetween decrements of delay and sound timers.
-const TIMER_DECREMENT_INTERVAL_MICROSECONDS: u128 = 16667;
+const TIMER_DECREMENT_INTERVAL_MICROSECONDS: u128 = 16666;
+/// The number of ms that should pass inbetween vblank interrupts.
+const VBLANK_INTERVAL_MICROSECONDS: u128 = 16666;
 /// The number of variable registers available.
 const VARIABLE_REGISTER_COUNT: usize = 16;
+/// The number of RPL user flags; SUPER-CHIP 1.1 emulation mode only.
+const RPL_REGISTER_COUNT: usize = 8;
 /// The maximum sprite height (pixels).
 const MAX_SPRITE_HEIGHT: u8 = 15;
-/// The number of font sprites.
-const FONT_SPRITE_COUNT: u8 = 15;
 /// The number of COSMAC VIP cycles used to execute one CHIP-8 interpreter cycle
 /// (used when emulating original COSMAC VIP variable instruction timings)
 const COSMAC_VIP_MACHINE_CYCLES_PER_CYCLE: u64 = 8;
 
 /// An enum to indicate which extension of CHIP-8 is to be emulated.  See external
 /// documentation for details of the differences in each case.
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum EmulationLevel {
     /// The original CHIP-8 interpreter for the RCA COSMAC VIP, optionally limited to 2k RAM
-    Chip8 { memory_limit_2k: bool },
+    /// and optionally set to simulate original COSMAC VIP cycles-per-instruction timings
+    Chip8 {
+        memory_limit_2k: bool,
+        variable_cycle_timing: bool,
+    },
     /// Re-implemented CHIP-8 interpreter for the HP48 graphing calculators
     Chip48,
     /// Version 1.1 of the SUPER-CHIP interpreter for HP48S and HP48SX graphing calculators
-    SuperChip11,
+    /// Optionally includes OCTO-specific SCHIP instruction quirks
+    SuperChip11 { octo_compatibility_mode: bool },
 }
 
 /// An enum used internally within the Chipolata crate to keep track of the processor
 /// execution status.
-#[derive(Debug, PartialEq)]
-enum ProcessorStatus {
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum ProcessorStatus {
     /// The processor has been instantiated but memory is empty
     StartingUp,
     /// The processor has been instantiated and font data loaded
@@ -59,6 +65,8 @@ enum ProcessorStatus {
     WaitingForKeypress,
     /// The processor is in an error state, having generated an `Error`
     Crashed,
+    /// Execution copmpleted (program exited); SUPER-CHIP emulation mode only
+    Completed,
 }
 
 /// An enum used to indicate which variant of [StateSnapshot] should be returned when a call is
@@ -75,20 +83,39 @@ pub enum StateSnapshotVerbosity {
 #[derive(Debug, PartialEq)]
 pub enum StateSnapshot {
     /// Minimal snapshot containing only the frame buffer state
-    MinimalSnapshot { frame_buffer: Display },
+    MinimalSnapshot {
+        frame_buffer: Display,
+        status: ProcessorStatus,
+    },
     /// Extended snapshot containing the frame buffer state along with all registers,
     /// stack and memory
     ExtendedSnapshot {
         frame_buffer: Display,
+        status: ProcessorStatus,
         stack: Stack,
         memory: Memory,
         program_counter: u16,
         index_register: u16,
         variable_registers: [u8; VARIABLE_REGISTER_COUNT],
+        rpl_registers: [u8; RPL_REGISTER_COUNT],
         delay_timer: u8,
         sound_timer: u8,
         cycles: usize,
+        high_resolution_mode: bool,
+        emulation_level: EmulationLevel,
     },
+}
+
+/// An enum used to keep track of the state of the vertical blank interrupt, for accurate display
+/// emulation in CHIP-8 mode
+#[derive(Debug, PartialEq)]
+pub enum VBlankStatus {
+    // No display instruction has been processed yet this frame
+    Idle,
+    // A display instruction is queued, awaiting v-blank interrupt
+    WaitingForVBlank,
+    // THe v-blank interrupt has been set; drawing can proceed
+    ReadyToDraw,
 }
 
 /// An abstraction of the CHIP-8 processor, and the core public interface to the Chipolata crate.
@@ -105,21 +132,28 @@ pub struct Processor {
     program_counter: u16, // The program counter register (points to next opcode location in memory)
     index_register: u16,  // The index counter register (used to point to memory addresses)
     variable_registers: [u8; VARIABLE_REGISTER_COUNT], // General purposes registers
+    rpl_registers: [u8; RPL_REGISTER_COUNT], // SUPER-CHIP 1.1 emulation mode only; RPL registers
     delay_timer: u8,      // Delay timer, decrements automatically at 60hz when non-zero
     sound_timer: u8,      // Sounds timer, decrements automatically at 60hz when non-zero
     cycles: usize,        // The number of processor cycles that have been executed
+    high_resolution_mode: bool, // SUPER-CHIP 1.1 emulation mode only; true when when in high-res mode
     // ADDITIONAL STATE FIELDS
     keystate: KeyState, // A representation of the state (pressed/not pressed) of each key
+    waiting_original_keystate: KeyState, // Keystate as at the start of an FX0A instruction
+    keys_pressed_since_wait: Vec<u8>, // Keys pressed (but not released) during FX0A wait
     status: ProcessorStatus, // The current execution status of the processor
     last_timer_decrement: Instant, //  The moment the delay and sound timers were last decremented
     last_execution_cycle_complete: Instant, // The moment the execute cycle was last completed
+    last_vblank_interrupt: Instant, // CHIP-8 emulation mode only; the last vblank interrupt time
+    vblank_status: VBlankStatus, // CHIP-8 emulation mode only; state of v-blank interrupt
     // CONFIG AND SETUP FIELDS
-    font: Font, // The font loaded into the processor (only used during initialisation)
+    low_resolution_font: Font, // The font loaded into the processor (only used during initialisation)
+    high_resolution_font: Option<Font>, // SUPER-CHIP 1.1 emulation mode only; the high resolution font data
     program: Program, // The program loaded into the processor (only used during initialisation)
     font_start_address: usize, // The start address in memory at which the font is loaded
+    high_resolution_font_start_address: usize, // SUPER-CHIP 1.1 emulation mode only
     program_start_address: usize, // The start address in memory at which the program is loaded
     processor_speed_hertz: u64, // Used to calculate the time between execute cycles
-    use_variable_cycle_timings: bool, // If true, use original COSMAC VIP cycle timings by opcode
     emulation_level: EmulationLevel, // Component and instruction-compatibility configuration
 }
 
@@ -132,26 +166,43 @@ impl Processor {
     /// * `program` - a [Program] instance holding the bytes of the ROM to be executed
     /// * `options` - an [Options] instance holding Chipolata start-up configuration information
     pub fn initialise_and_load(program: Program, options: Options) -> Result<Self, ChipolataError> {
+        let low_res_font: Font = Font::default_low_resolution();
+        let high_res_font: Option<Font> = match options.emulation_level {
+            EmulationLevel::SuperChip11 {
+                octo_compatibility_mode: true,
+            } => Some(Font::octo_high_resolution()),
+            EmulationLevel::SuperChip11 {
+                octo_compatibility_mode: false,
+            } => Some(Font::default_high_resolution()),
+            _ => None,
+        };
         let mut processor = Processor {
-            frame_buffer: Display::new(),
+            frame_buffer: Display::new(options.emulation_level),
             stack: Stack::new(options.emulation_level),
             memory: Memory::new(options.emulation_level),
             program_counter: options.program_start_address,
             index_register: 0x0,
             variable_registers: [0x0; VARIABLE_REGISTER_COUNT],
+            rpl_registers: [0x0; RPL_REGISTER_COUNT],
             delay_timer: 0x0,
             sound_timer: 0x0,
             cycles: 0,
+            high_resolution_mode: false,
             keystate: KeyState::new(),
+            waiting_original_keystate: KeyState::new(),
+            keys_pressed_since_wait: Vec::new(),
             status: ProcessorStatus::StartingUp,
             last_timer_decrement: Instant::now(),
             last_execution_cycle_complete: Instant::now(),
-            font: Font::default(),
+            last_vblank_interrupt: Instant::now(),
+            vblank_status: VBlankStatus::Idle,
+            low_resolution_font: low_res_font,
+            high_resolution_font: high_res_font,
             program: program,
             font_start_address: options.font_start_address as usize,
+            high_resolution_font_start_address: 0x0,
             program_start_address: options.program_start_address as usize,
             processor_speed_hertz: options.processor_speed_hertz,
-            use_variable_cycle_timings: options.use_variable_cycle_timings,
             emulation_level: options.emulation_level,
         };
         if let Err(e) = processor.load_font_data() {
@@ -195,17 +246,22 @@ impl Processor {
         match verbosity {
             StateSnapshotVerbosity::Minimal => StateSnapshot::MinimalSnapshot {
                 frame_buffer: self.frame_buffer.clone(),
+                status: self.status,
             },
             StateSnapshotVerbosity::Extended => StateSnapshot::ExtendedSnapshot {
                 frame_buffer: self.frame_buffer.clone(),
+                status: self.status,
                 stack: self.stack.clone(),
                 memory: self.memory.clone(),
                 program_counter: self.program_counter,
                 index_register: self.index_register,
                 variable_registers: self.variable_registers,
+                rpl_registers: self.rpl_registers,
                 delay_timer: self.delay_timer,
                 sound_timer: self.sound_timer,
                 cycles: self.cycles,
+                high_resolution_mode: self.high_resolution_mode,
+                emulation_level: self.emulation_level,
             },
         }
     }
@@ -226,16 +282,41 @@ impl Processor {
 
     /// Loads the processor's font data into memory.  If the size of the font data combined with
     /// the specified start location in memory would cause a write to unaddressable memory, then
-    /// return an [ErrorDetail::MemoryAddressOutOfBounds].
+    /// return an [ErrorDetail::MemoryAddressOutOfBounds].  This will always load the standard
+    /// low-resolution CHIP-8 font into memory, however if in SUPER-CHIP 1.1 emulation mode this
+    /// will also load the high-resolution SUPER-CHIP font as well
     fn load_font_data(&mut self) -> Result<(), ErrorDetail> {
-        //
-        if self.font_start_address + self.font.font_data_size() >= self.program_start_address {
+        // Load the low-resolution font
+        if self.font_start_address + self.low_resolution_font.font_data_size()
+            >= self.program_start_address
+        {
             return Err(ErrorDetail::MemoryAddressOutOfBounds {
-                address: (self.font_start_address + self.font.font_data_size()) as u16,
+                address: (self.font_start_address + self.low_resolution_font.font_data_size())
+                    as u16,
             });
         }
-        self.memory
-            .write_bytes(self.font_start_address, self.font.font_data())?;
+        self.memory.write_bytes(
+            self.font_start_address,
+            self.low_resolution_font.font_data(),
+        )?;
+        // Load the high-resolution font, if present
+        if let Some(high_resolution_font) = &self.high_resolution_font {
+            self.high_resolution_font_start_address =
+                self.font_start_address as usize + self.low_resolution_font.font_data_size();
+            if self.high_resolution_font_start_address + high_resolution_font.font_data_size()
+                >= self.program_start_address
+            {
+                return Err(ErrorDetail::MemoryAddressOutOfBounds {
+                    address: (self.high_resolution_font_start_address
+                        + high_resolution_font.font_data_size())
+                        as u16,
+                });
+            }
+            self.memory.write_bytes(
+                self.high_resolution_font_start_address,
+                high_resolution_font.font_data(),
+            )?;
+        }
         Ok(())
     }
 
@@ -268,8 +349,19 @@ impl Processor {
     /// Executes one iteration of the Chipolata fetch -> decode -> execute cycle.  Returns a boolean
     /// indicating whether the display frame buffer was updated this cycle.
     pub fn execute_cycle(&mut self) -> Result<bool, ChipolataError> {
-        // Set processor state to Running
-        self.status = ProcessorStatus::Running;
+        // Change processor status if appropriate
+        match self.status {
+            ProcessorStatus::ProgramLoaded => self.status = ProcessorStatus::Running,
+            ProcessorStatus::Running | ProcessorStatus::WaitingForKeypress => {
+                // no change
+            }
+            ProcessorStatus::StartingUp
+            | ProcessorStatus::Initialised
+            | ProcessorStatus::Completed
+            | ProcessorStatus::Crashed => {
+                return Err(self.crash(ErrorDetail::UnknownError));
+            }
+        }
         // Increment the cycles counter
         self.cycles += 1;
         // Decrement the delay and sound timers, if appropriate
@@ -321,7 +413,11 @@ impl Processor {
     /// ignored by the function.
     fn calculate_cycle_duration(&self, cosmac_cycles: u64) -> Duration {
         let execution_duration: Duration;
-        if self.use_variable_cycle_timings {
+        if let EmulationLevel::Chip8 {
+            memory_limit_2k: _,
+            variable_cycle_timing: true,
+        } = self.emulation_level
+        {
             // Define the cycle duration to be the COSMAC VIP original instruction timing
             // (in cycles) running at the specified processor speed
             execution_duration = Duration::from_micros(
@@ -335,10 +431,23 @@ impl Processor {
         execution_duration
     }
 
-    /// Checks if the required time has passed since the timers were last decremented
-    /// and if so, decrements them
+    /// Checks if the required time has passed since the sound and delay timers were last decremented
+    /// and if so, decrements them.  Also counts down to vblank interrupt.
     fn decrement_timers(&mut self) {
-        // Nothing to do unless timers are running
+        // If in Chip8 emulation mode, check the vblank interrupt timer and set interrupt accordingly
+        if let EmulationLevel::Chip8 {
+            memory_limit_2k: _,
+            variable_cycle_timing: _,
+        } = self.emulation_level
+        {
+            if self.last_vblank_interrupt.elapsed().as_micros() >= VBLANK_INTERVAL_MICROSECONDS {
+                if let VBlankStatus::WaitingForVBlank = self.vblank_status {
+                    self.vblank_status = VBlankStatus::ReadyToDraw;
+                }
+                self.last_vblank_interrupt = Instant::now();
+            }
+        }
+        // Nothing to do for delay and sound timers unless timers are running
         if (self.delay_timer | self.sound_timer) > 0x0 {
             // Check how long it has been since the timers were last decremented; if the interval
             // is greater than the specified threshold then we should decrement again
@@ -373,8 +482,14 @@ impl Processor {
     fn execute(&mut self, instr: Instruction) -> Result<u64, ErrorDetail> {
         match instr {
             Instruction::Op004B => self.execute_004B(),
+            Instruction::Op00CN { n } => self.execute_00CN(n),
             Instruction::Op00E0 => self.execute_00E0(),
             Instruction::Op00EE => self.execute_00EE(),
+            Instruction::Op00FB => self.execute_00FB(),
+            Instruction::Op00FC => self.execute_00FC(),
+            Instruction::Op00FD => self.execute_00FD(),
+            Instruction::Op00FE => self.execute_00FE(),
+            Instruction::Op00FF => self.execute_00FF(),
             Instruction::Op0NNN { nnn } => self.execute_0NNN(nnn),
             Instruction::Op1NNN { nnn } => self.execute_1NNN(nnn),
             Instruction::Op2NNN { nnn } => self.execute_2NNN(nnn),
@@ -405,9 +520,12 @@ impl Processor {
             Instruction::OpFX1E { x } => self.execute_FX1E(x),
             Instruction::OpFX0A { x } => self.execute_FX0A(x),
             Instruction::OpFX29 { x } => self.execute_FX29(x),
+            Instruction::OpFX30 { x } => self.execute_FX30(x),
             Instruction::OpFX33 { x } => self.execute_FX33(x),
             Instruction::OpFX55 { x } => self.execute_FX55(x),
             Instruction::OpFX65 { x } => self.execute_FX65(x),
+            Instruction::OpFX75 { x } => self.execute_FX75(x),
+            Instruction::OpFX85 { x } => self.execute_FX85(x),
         }
     }
 }

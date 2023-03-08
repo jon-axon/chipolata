@@ -7,6 +7,7 @@ const NUMBER_OF_KEYS: u8 = 16;
 
 /// An abstraction of the state of each key on the CHIP-8 keypad
 /// (pressed / not pressed).
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct KeyState {
     /// Array holding a boolean for each key (true means pressed, false means not pressed).
     keys_pressed: [bool; NUMBER_OF_KEYS as usize],

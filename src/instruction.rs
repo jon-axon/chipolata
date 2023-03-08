@@ -4,8 +4,14 @@ use crate::error::ErrorDetail;
 #[derive(Debug, PartialEq)]
 pub(crate) enum Instruction {
     Op004B,                               // Turn on COSMAC VIP display
+    Op00CN { n: u8 },                     // [SUPER-CHIP 1.1] Scroll N pixels down (N/2 in low res)
     Op00E0,                               // Clear screen
     Op00EE,                               // Subroutine (call)
+    Op00FB,                               // [SUPER-CHIP 1.1] Scroll right 4 pixels (2 in low res)
+    Op00FC,                               // [SUPER-CHIP 1.1] Scroll left 4 pixels (2 in low res)
+    Op00FD,                               // [SUPER-CHIP 1.1] Exit the interpreter
+    Op00FE,                               // [SUPER-CHIP 1.1] Disable high-resolution mode
+    Op00FF,                               // [SUPER-CHIP 1.1] Enable high-resolution mode
     Op0NNN { nnn: u16 },                  // Execute machine language routine
     Op1NNN { nnn: u16 },                  // Jump to NNN
     Op2NNN { nnn: u16 },                  // Subroutine (return)
@@ -36,9 +42,12 @@ pub(crate) enum Instruction {
     OpFX1E { x: usize },                  // I = I + Vx
     OpFX0A { x: usize },                  // Vx = blocks until keypress
     OpFX29 { x: usize },                  // Read char from Vx, set I to address of that font char
+    OpFX30 { x: usize },                  // [SUPER-CHIP 1.1] as FX29 but for high-resolution font
     OpFX33 { x: usize },                  // Binary-coded decimal conversion
     OpFX55 { x: usize },                  // Store V registers to memory
     OpFX65 { x: usize },                  // Load V registers from memory
+    OpFX75 { x: usize },                  // [SUPER-CHIP 1.1] Store V registers to RPL user flags
+    OpFX85 { x: usize },                  // [SUPER-CHIP 1.1] Load V registers from RPL user flags
 }
 
 impl Instruction {
@@ -59,8 +68,16 @@ impl Instruction {
         // the corresponding enum variant
         match (first_nibble, second_nibble, third_nibble, fourth_nibble) {
             (0x0, 0x0, 0x4, 0xB) => Ok(Instruction::Op004B),
+            (0x0, 0x0, 0xC, _) => Ok(Instruction::Op00CN {
+                n: fourth_nibble as u8,
+            }),
             (0x0, 0x0, 0xE, 0x0) => Ok(Instruction::Op00E0),
             (0x0, 0x0, 0xE, 0xE) => Ok(Instruction::Op00EE),
+            (0x0, 0x0, 0xF, 0xB) => Ok(Instruction::Op00FB),
+            (0x0, 0x0, 0xF, 0xC) => Ok(Instruction::Op00FC),
+            (0x0, 0x0, 0xF, 0xD) => Ok(Instruction::Op00FD),
+            (0x0, 0x0, 0xF, 0xE) => Ok(Instruction::Op00FE),
+            (0x0, 0x0, 0xF, 0xF) => Ok(Instruction::Op00FF),
             (0x0, ..) => Ok(Instruction::Op0NNN {
                 nnn: opcode & 0x0FFF,
             }),
@@ -169,6 +186,9 @@ impl Instruction {
             (0xF, _, 0x2, 0x9) => Ok(Instruction::OpFX29 {
                 x: second_nibble as usize,
             }),
+            (0xF, _, 0x3, 0x0) => Ok(Instruction::OpFX30 {
+                x: second_nibble as usize,
+            }),
             (0xF, _, 0x3, 0x3) => Ok(Instruction::OpFX33 {
                 x: second_nibble as usize,
             }),
@@ -176,6 +196,12 @@ impl Instruction {
                 x: second_nibble as usize,
             }),
             (0xF, _, 0x6, 0x5) => Ok(Instruction::OpFX65 {
+                x: second_nibble as usize,
+            }),
+            (0xF, _, 0x7, 0x5) => Ok(Instruction::OpFX75 {
+                x: second_nibble as usize,
+            }),
+            (0xF, _, 0x8, 0x5) => Ok(Instruction::OpFX85 {
                 x: second_nibble as usize,
             }),
             // If we have not matched by this point then we cannot identify the
@@ -189,8 +215,14 @@ impl Instruction {
     pub(crate) fn name(&self) -> &str {
         match self {
             Instruction::Op004B => "004B",
+            Instruction::Op00CN { .. } => "00CN",
             Instruction::Op00E0 => "00E0",
             Instruction::Op00EE => "00EE",
+            Instruction::Op00FB => "00FB",
+            Instruction::Op00FC => "00FC",
+            Instruction::Op00FD => "00FD",
+            Instruction::Op00FE => "00FE",
+            Instruction::Op00FF => "00FF",
             Instruction::Op0NNN { .. } => "0NNN",
             Instruction::Op1NNN { .. } => "1NNN",
             Instruction::Op2NNN { .. } => "2NNN",
@@ -221,9 +253,12 @@ impl Instruction {
             Instruction::OpFX1E { .. } => "FX1E",
             Instruction::OpFX0A { .. } => "FX0A",
             Instruction::OpFX29 { .. } => "FX29",
+            Instruction::OpFX30 { .. } => "FX30",
             Instruction::OpFX33 { .. } => "FX33",
             Instruction::OpFX55 { .. } => "FX55",
             Instruction::OpFX65 { .. } => "FX65",
+            Instruction::OpFX75 { .. } => "FX75",
+            Instruction::OpFX85 { .. } => "FX85",
         }
     }
 }
@@ -242,6 +277,14 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_00CN() {
+        assert_eq!(
+            Instruction::decode_from(0x00C5).unwrap(),
+            Instruction::Op00CN { n: 0x5 }
+        );
+    }
+
+    #[test]
     fn test_decode_00E0() {
         assert_eq!(
             Instruction::decode_from(0x00E0).unwrap(),
@@ -254,6 +297,46 @@ mod tests {
         assert_eq!(
             Instruction::decode_from(0x00EE).unwrap(),
             Instruction::Op00EE
+        );
+    }
+
+    #[test]
+    fn test_decode_00FB() {
+        assert_eq!(
+            Instruction::decode_from(0x00FB).unwrap(),
+            Instruction::Op00FB
+        );
+    }
+
+    #[test]
+    fn test_decode_00FC() {
+        assert_eq!(
+            Instruction::decode_from(0x00FC).unwrap(),
+            Instruction::Op00FC
+        );
+    }
+
+    #[test]
+    fn test_decode_00FD() {
+        assert_eq!(
+            Instruction::decode_from(0x00FD).unwrap(),
+            Instruction::Op00FD
+        );
+    }
+
+    #[test]
+    fn test_decode_00FE() {
+        assert_eq!(
+            Instruction::decode_from(0x00FE).unwrap(),
+            Instruction::Op00FE
+        );
+    }
+
+    #[test]
+    fn test_decode_00FF() {
+        assert_eq!(
+            Instruction::decode_from(0x00FF).unwrap(),
+            Instruction::Op00FF
         );
     }
 
@@ -502,6 +585,14 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_FX30() {
+        assert_eq!(
+            Instruction::decode_from(0xF430).unwrap(),
+            Instruction::OpFX30 { x: 0x4 }
+        );
+    }
+
+    #[test]
     fn test_decode_FX33() {
         assert_eq!(
             Instruction::decode_from(0xFD33).unwrap(),
@@ -522,6 +613,22 @@ mod tests {
         assert_eq!(
             Instruction::decode_from(0xFA65).unwrap(),
             Instruction::OpFX65 { x: 0xA }
+        );
+    }
+
+    #[test]
+    fn test_decode_FX75() {
+        assert_eq!(
+            Instruction::decode_from(0xFA75).unwrap(),
+            Instruction::OpFX75 { x: 0xA }
+        );
+    }
+
+    #[test]
+    fn test_decode_FX85() {
+        assert_eq!(
+            Instruction::decode_from(0xFA85).unwrap(),
+            Instruction::OpFX85 { x: 0xA }
         );
     }
 

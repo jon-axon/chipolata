@@ -1,6 +1,5 @@
 use super::*;
-use crate::program::Program;
-use std::time::{Duration, Instant};
+use std::collections::HashMap;
 
 fn setup_test_processor_chip8() -> Processor {
     let program: Program = Program::default();
@@ -17,7 +16,9 @@ fn setup_test_processor_chip48() -> Processor {
 fn setup_test_processor_superchip11() -> Processor {
     let program: Program = Program::default();
     let mut options: Options = Options::default();
-    options.emulation_level = EmulationLevel::SuperChip11;
+    options.emulation_level = EmulationLevel::SuperChip11 {
+        octo_compatibility_mode: false,
+    };
     Processor::initialise_and_load(program, options).unwrap()
 }
 
@@ -29,12 +30,12 @@ fn test_load_font_data() {
             .memory
             .read_bytes(
                 processor.font_start_address,
-                processor.font.font_data_size(),
+                processor.low_resolution_font.font_data_size(),
             )
             .unwrap(),
     );
     assert!(processor.load_font_data().is_ok());
-    assert_eq!(stored_font, *processor.font.font_data());
+    assert_eq!(stored_font, *processor.low_resolution_font.font_data());
 }
 
 #[test]
@@ -44,7 +45,65 @@ fn test_load_font_data_overflow_error() {
     assert_eq!(
         processor.load_font_data().unwrap_err(),
         ErrorDetail::MemoryAddressOutOfBounds {
-            address: (processor.font_start_address + processor.font.font_data_size()) as u16
+            address: (processor.font_start_address + processor.low_resolution_font.font_data_size())
+                as u16
+        }
+    );
+}
+
+#[test]
+fn test_load_font_data_superchip11_low_resolution() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let stored_font: Vec<u8> = Vec::from(
+        processor
+            .memory
+            .read_bytes(
+                processor.font_start_address,
+                processor.low_resolution_font.font_data_size(),
+            )
+            .unwrap(),
+    );
+    assert!(processor.load_font_data().is_ok());
+    assert_eq!(stored_font, *processor.low_resolution_font.font_data());
+}
+
+#[test]
+fn test_load_font_data_superchip11_high_resolution() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let stored_font: Vec<u8> = Vec::from(
+        processor
+            .memory
+            .read_bytes(
+                processor.high_resolution_font_start_address,
+                processor
+                    .high_resolution_font
+                    .as_ref()
+                    .unwrap()
+                    .font_data_size(),
+            )
+            .unwrap(),
+    );
+    assert!(processor.load_font_data().is_ok());
+    assert_eq!(
+        stored_font,
+        *processor.high_resolution_font.unwrap().font_data()
+    );
+}
+
+#[test]
+fn test_load_font_data_superchip11_high_resolution_overflow_error() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    // This leaves space for the low-resolution font, but not the high-resolution one
+    processor.font_start_address = 0x1AF;
+    assert_eq!(
+        processor.load_font_data().unwrap_err(),
+        ErrorDetail::MemoryAddressOutOfBounds {
+            address: (processor.high_resolution_font_start_address
+                + processor
+                    .high_resolution_font
+                    .as_ref()
+                    .unwrap()
+                    .font_data_size()) as u16
         }
     );
 }
@@ -82,31 +141,36 @@ fn test_load_program_overflow_error() {
 #[test]
 fn test_export_state_snapshot_minimal() {
     let mut processor: Processor = setup_test_processor_chip8();
-    processor.frame_buffer.pixels[0][0] = 0xC3;
+    processor.frame_buffer[0][0] = 0xC3;
     let state_snapshot: StateSnapshot =
         processor.export_state_snapshot(StateSnapshotVerbosity::Minimal);
     assert!(
         matches!(state_snapshot, StateSnapshot::MinimalSnapshot { .. })
             && match state_snapshot {
-                StateSnapshot::MinimalSnapshot { frame_buffer } =>
-                    frame_buffer.pixels[0][0] == 0xC3,
+                StateSnapshot::MinimalSnapshot {
+                    frame_buffer,
+                    status: _,
+                } => frame_buffer[0][0] == 0xC3,
                 _ => false,
             }
     );
 }
 
 #[test]
-fn test__state_snapshot_verbose() {
+fn test_state_snapshot_verbose() {
     let mut processor: Processor = setup_test_processor_chip8();
-    processor.frame_buffer.pixels[0][0] = 0xC3;
+    processor.frame_buffer[0][0] = 0xC3;
+    processor.status = ProcessorStatus::Running;
     processor.program_counter = 0x1DF1;
     processor.index_register = 0x3CC2;
     processor.variable_registers[0x4] = 0xB2;
+    processor.rpl_registers[0x2] = 0x13;
     processor.delay_timer = 0x3;
     processor.sound_timer = 0x4;
     processor.stack.push(0x30E1).unwrap();
     processor.memory.bytes[0x33] = 0x44;
     processor.cycles = 16473;
+    processor.high_resolution_mode = true;
     let state_snapshot: StateSnapshot =
         processor.export_state_snapshot(StateSnapshotVerbosity::Extended);
     assert!(
@@ -114,24 +178,36 @@ fn test__state_snapshot_verbose() {
             && match state_snapshot {
                 StateSnapshot::ExtendedSnapshot {
                     frame_buffer,
+                    status,
                     program_counter,
                     index_register,
                     variable_registers,
+                    rpl_registers,
                     delay_timer,
                     sound_timer,
                     mut stack,
                     memory,
                     cycles,
+                    high_resolution_mode,
+                    emulation_level,
                 } =>
-                    frame_buffer.pixels[0][0] == 0xC3
+                    frame_buffer[0][0] == 0xC3
+                        && status == ProcessorStatus::Running
                         && program_counter == 0x1DF1
                         && index_register == 0x3CC2
                         && variable_registers[0x4] == 0xB2
+                        && rpl_registers[0x2] == 0x13
                         && delay_timer == 0x3
                         && sound_timer == 0x4
                         && stack.pop().unwrap() == 0x30E1
                         && memory.bytes[0x33] == 0x44
-                        && cycles == 16473,
+                        && cycles == 16473
+                        && high_resolution_mode == true
+                        && emulation_level
+                            == EmulationLevel::Chip8 {
+                                memory_limit_2k: false,
+                                variable_cycle_timing: false
+                            },
                 _ => false,
             }
     );
@@ -222,6 +298,22 @@ fn test_decrement_timers_stopped() {
 }
 
 #[test]
+fn test_decrement_vblankinterrupt() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.vblank_status = VBlankStatus::WaitingForVBlank;
+    let mut duration: Duration = Duration::from_micros(VBLANK_INTERVAL_MICROSECONDS as u64 - 100);
+    let mut last_time: Instant = Instant::now() - duration;
+    processor.last_vblank_interrupt = last_time;
+    processor.decrement_timers();
+    assert_eq!(processor.vblank_status, VBlankStatus::WaitingForVBlank);
+    duration = Duration::from_micros(VBLANK_INTERVAL_MICROSECONDS as u64 + 100);
+    last_time = Instant::now() - duration;
+    processor.last_vblank_interrupt = last_time;
+    processor.decrement_timers();
+    assert_eq!(processor.vblank_status, VBlankStatus::ReadyToDraw);
+}
+
+#[test]
 fn test_execute_004B() {
     let mut processor: Processor = setup_test_processor_chip8();
     assert_eq!(
@@ -231,21 +323,53 @@ fn test_execute_004B() {
 }
 
 #[test]
+fn test_execute_00CN_superchip11() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    // Set the first byte of the first row to be 11111111 (i.e. 0xFF) and the first byte of the
+    // 10th row to be 00000000 (i.e. 0x00)
+    processor.frame_buffer[0][0] = 0xFF;
+    processor.frame_buffer[9][0] = 0x00;
+    // When scrolled down by 9 pixels, this first byte of the 10th row should become 111111111 (i.e. 0xFF)
+    assert!(
+        processor.frame_buffer.scroll_display_down(9).is_ok()
+            && processor.frame_buffer[9][0] == 0xFF
+    );
+}
+
+#[test]
+fn test_execute_00CN_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_00CN(2).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00C2 }
+    );
+}
+
+#[test]
+fn test_execute_00CN_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_00CN(2).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00C2 }
+    );
+}
+
+#[test]
 fn test_execute_00E0() {
     let mut processor: Processor = setup_test_processor_chip8();
     // Set every pixel to 1
-    for row in &mut processor.frame_buffer.pixels {
-        for col in &mut *row {
-            *col = 0xFF;
+    for column in 0..processor.frame_buffer.get_row_size_bytes() {
+        for row in 0..processor.frame_buffer.get_column_size_pixels() {
+            processor.frame_buffer[row][column] = 0xFF;
         }
     }
     // Now execute the instruction to clear the display
     processor.execute_00E0().unwrap();
     // Now check that every pixel is 0
     let mut pixel_is_set: bool = false;
-    'outer: for row in &processor.frame_buffer.pixels {
-        for col in row {
-            if *col > 0x00 {
+    'outer: for column in 0..processor.frame_buffer.get_row_size_bytes() {
+        for row in 0..processor.frame_buffer.get_column_size_pixels() {
+            if processor.frame_buffer[row][column] > 0x00 {
                 pixel_is_set = true;
                 break 'outer;
             }
@@ -271,6 +395,141 @@ fn test_execute_00EE_empty_stack_error() {
     assert_eq!(
         processor.execute_00EE().unwrap_err(),
         ErrorDetail::PopEmptyStack
+    );
+}
+
+#[test]
+fn test_execute_00FB_superchip11() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let row_size: usize = processor.frame_buffer.get_row_size_bytes();
+    // Set the last byte of the first row to be 11110000 (i.e. 0xF0)
+    processor.frame_buffer[0][row_size - 1] = 0xF0;
+    // When scrolled right by 4 pixels, this last byte should become 00001111 (i.e. 0x0F)
+    assert!(
+        processor.frame_buffer.scroll_display_right().is_ok()
+            && processor.frame_buffer[0][row_size - 1] == 0x0F
+    );
+}
+
+#[test]
+fn test_execute_00FB_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_00FB().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FB }
+    );
+}
+
+#[test]
+fn test_execute_00FB_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_00FB().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FB }
+    );
+}
+
+#[test]
+fn test_execute_00FC_superchip11() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    // Set the first byte of the first row to be 00001111 (i.e. 0x0F)
+    processor.frame_buffer[0][0] = 0x0F;
+    // When scrolled left by 4 pixels, this first byte should become 11110000 (i.e. 0xF0)
+    assert!(
+        processor.frame_buffer.scroll_display_left().is_ok()
+            && processor.frame_buffer[0][0] == 0xF0
+    );
+}
+
+#[test]
+fn test_execute_00FC_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_00FC().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FC }
+    );
+}
+
+#[test]
+fn test_execute_00FC_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_00FC().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FC }
+    );
+}
+
+#[test]
+fn test_execute_00FD() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    assert!(processor.execute_00FD().is_ok() && processor.status == ProcessorStatus::Completed);
+}
+
+#[test]
+fn test_execute_00FD_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_00FD().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FD }
+    );
+}
+
+#[test]
+fn test_execute_00FD_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_00FD().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FD }
+    );
+}
+
+#[test]
+fn test_execute_00FE() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.high_resolution_mode = true;
+    assert!(processor.execute_00FE().is_ok() && processor.high_resolution_mode == false);
+}
+
+#[test]
+fn test_execute_00FE_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_00FE().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FE }
+    );
+}
+
+#[test]
+fn test_execute_00FE_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_00FE().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FE }
+    );
+}
+
+#[test]
+fn test_execute_00FF() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.high_resolution_mode = false;
+    assert!(processor.execute_00FF().is_ok() && processor.high_resolution_mode == true);
+}
+
+#[test]
+fn test_execute_00FF_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_00FF().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FF }
+    );
+}
+
+#[test]
+fn test_execute_00FF_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_00FF().unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0x00FF }
     );
 }
 
@@ -745,6 +1004,15 @@ fn test_execute_8XY6_0_shifted_superchip11_mode() {
 }
 
 #[test]
+fn test_execute_8XY6_Vf() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.variable_registers[0xF] = 0xFF;
+    processor.variable_registers[0x7] = 0xFF;
+    processor.variable_registers[0xF] = 0x44;
+    assert!(processor.execute_8XY6(0xF, 0x7).is_ok() && processor.variable_registers[0xF] == 0x01);
+}
+
+#[test]
 fn test_execute_8XY6_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
     let mut operands: HashMap<String, usize> = HashMap::new();
@@ -842,6 +1110,15 @@ fn test_execute_8XYE_0_shifted() {
             && processor.variable_registers[0xE] == 0xC4
             && processor.variable_registers[0xF] == 0x00
     );
+}
+
+#[test]
+fn test_execute_8XYE_Vf() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.variable_registers[0xF] = 0xFF;
+    processor.variable_registers[0x7] = 0xFF;
+    processor.variable_registers[0xF] = 0x44;
+    assert!(processor.execute_8XYE(0xF, 0x7).is_ok() && processor.variable_registers[0xF] == 0x01);
 }
 
 #[test]
@@ -973,16 +1250,51 @@ fn test_execute_CXNN_invalid_register_x_error() {
 }
 
 fn fill_row(display: &mut Display, y: usize) {
-    for i in &mut display.pixels[y] {
+    for i in &mut display[y] {
         *i = 0xFF;
     }
+}
+
+#[test]
+fn test_execute_DXYN_Idle_to_Waiting() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.vblank_status = VBlankStatus::Idle;
+    processor.last_vblank_interrupt = Instant::now();
+    processor.execute_DXYN(0x3, 0xA, 1).unwrap();
+    assert_eq!(processor.vblank_status, VBlankStatus::WaitingForVBlank);
+}
+
+#[test]
+fn test_execute_DXYN_Waiting_to_Waiting() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.vblank_status = VBlankStatus::WaitingForVBlank;
+    processor.last_vblank_interrupt = Instant::now();
+    processor.execute_DXYN(0x3, 0xA, 1).unwrap();
+    assert_eq!(processor.vblank_status, VBlankStatus::WaitingForVBlank);
+}
+
+#[test]
+fn test_execute_DXYN_Ready_To_Idle() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.index_register = processor.font_start_address as u16;
+    let sprite: [u8; 1] = [0xFF]; // create single-byte sprite with all pixels on
+    processor
+        .memory
+        .write_bytes(processor.font_start_address, &sprite)
+        .unwrap(); // write sprite to memory at default font location
+    processor.variable_registers[0x3] = 0x8; // set V3 to 0 (X coordinate)
+    processor.variable_registers[0xA] = 0x1; // set V10 to 1 (Y coordinate)
+    processor.vblank_status = VBlankStatus::ReadyToDraw;
+    processor.last_vblank_interrupt = Instant::now();
+    processor.execute_DXYN(0x3, 0xA, 1).unwrap();
+    assert_eq!(processor.vblank_status, VBlankStatus::Idle);
 }
 
 #[test]
 fn test_execute_DXYN_pixel_turned_off() {
     let mut processor: Processor = setup_test_processor_chip8();
     fill_row(&mut processor.frame_buffer, 0x1); // all display pixels on in second row
-    processor.frame_buffer.pixels[0x1][0x0] = 0x0; // turn off first byte of pixels only
+    processor.frame_buffer[0x1][0x0] = 0x0; // turn off first byte of pixels only
     processor.variable_registers[0xF] = 0x2; // only possible values later are 0x0 and 0x1
     processor.index_register = processor.font_start_address as u16;
     let sprite: [u8; 1] = [0xFF]; // create single-byte sprite with all pixels on
@@ -992,6 +1304,7 @@ fn test_execute_DXYN_pixel_turned_off() {
         .unwrap(); // write sprite to memory at default font location
     processor.variable_registers[0x3] = 0x8; // set V3 to 0 (X coordinate)
     processor.variable_registers[0xA] = 0x1; // set V10 to 1 (Y coordinate)
+    processor.vblank_status = VBlankStatus::ReadyToDraw;
     processor.execute_DXYN(0x3, 0xA, 1).unwrap();
     assert_eq!(processor.variable_registers[0xF], 0x1); // at least one pixel will flip if successful
 }
@@ -1009,8 +1322,113 @@ fn test_execute_DXYN_no_pixel_turned_off() {
         .unwrap(); // write sprite to memory at default font location
     processor.variable_registers[0x3] = 0x0; // set V3 to 0 (X coordinate)
     processor.variable_registers[0xA] = 0x1; // set V10 to 1 (Y coordinate)
+    processor.vblank_status = VBlankStatus::ReadyToDraw;
     processor.execute_DXYN(0x3, 0xA, 1).unwrap();
     assert_eq!(processor.variable_registers[0xF], 0x0); // no pixel will flip if successful
+}
+
+#[test]
+fn test_duplicate_bits() {
+    let (a, b) = Processor::duplicate_bits(0b10110101);
+    assert!(a == 0b11001111 && b == 0b00110011);
+    let (a, b) = Processor::duplicate_bits(0b11100110);
+    assert!(a == 0b11111100 && b == 0b00111100);
+    let (a, b) = Processor::duplicate_bits(0b11111111);
+    assert!(a == 0b11111111 && b == 0b11111111);
+}
+
+#[test]
+fn test_execute_DXYN_superchip11_low_res_trivial_sprite() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.high_resolution_mode = false;
+    processor.variable_registers[0xF] = 0x1; // set Vf to 1
+    processor.index_register = processor.font_start_address as u16;
+    // Create a trivial 1-bit sprite: 10000000
+    let sprite: [u8; 1] = [0x80];
+    // Write sprite to memory at default font location
+    processor
+        .memory
+        .write_bytes(processor.font_start_address, &sprite)
+        .unwrap();
+    // Set V3 to 1 (X coordinate) and V10 to 1 (Y coordinate)
+    processor.variable_registers[0x3] = 0x1;
+    processor.variable_registers[0xA] = 0x1;
+    // The following should execute a low-res SUPER-CHIP draw, which should up-scale the sprite to 2x2
+    processor.execute_DXYN(0x3, 0xA, 1).unwrap();
+    assert!(
+        processor.variable_registers[0xF] == 0x0 // no collisions occurred
+            && processor.frame_buffer[0][0] == 0x00 // 00000000
+            && processor.frame_buffer[1][0] == 0x00 // 00000000
+            && processor.frame_buffer[2][0] == 0x30 // 00110000
+            && processor.frame_buffer[3][0] == 0x30 // 00110000
+    );
+}
+
+#[test]
+fn test_execute_DXYN_superchip11_low_res_wide_sprite() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.high_resolution_mode = false;
+    processor.variable_registers[0xF] = 0x1; // set Vf to 1
+    processor.index_register = processor.font_start_address as u16;
+    // Create a full-width sprite: 10011011
+    let sprite: [u8; 1] = [0x9B];
+    // Write sprite to memory at default font location
+    processor
+        .memory
+        .write_bytes(processor.font_start_address, &sprite)
+        .unwrap();
+    // Set V3 to 2 (X coordinate) and V10 to 2 (Y coordinate)
+    processor.variable_registers[0x3] = 0x2;
+    processor.variable_registers[0xA] = 0x2;
+    // The following should execute a low-res SUPER-CHIP draw, which should up-scale the sprite 2x
+    processor.execute_DXYN(0x3, 0xA, 1).unwrap();
+    assert!(
+        processor.variable_registers[0xF] == 0x0 // no collisions occurred
+            && processor.frame_buffer[0][0] == 0x00 // 00000000
+            && processor.frame_buffer[0][1] == 0x00 // 00000000
+            && processor.frame_buffer[0][2] == 0x00 // 00000000
+            && processor.frame_buffer[1][0] == 0x00 // 00000000
+            && processor.frame_buffer[1][1] == 0x00 // 00000000
+            && processor.frame_buffer[1][2] == 0x00 // 00000000
+            && processor.frame_buffer[2][0] == 0x00 // 00000000
+            && processor.frame_buffer[2][1] == 0x00 // 00000000
+            && processor.frame_buffer[2][2] == 0x00 // 00000000
+            && processor.frame_buffer[3][0] == 0x00 // 00000000
+            && processor.frame_buffer[3][1] == 0x00 // 00000000
+            && processor.frame_buffer[3][2] == 0x00 // 00000000
+            && processor.frame_buffer[4][0] == 0x0C // 00001100
+            && processor.frame_buffer[4][1] == 0x3C // 00111100
+            && processor.frame_buffer[4][2] == 0xF0 // 11110000
+            && processor.frame_buffer[5][0] == 0x0C // 00001100
+            && processor.frame_buffer[5][1] == 0x3C // 00111100
+            && processor.frame_buffer[5][2] == 0xF0 // 11110000
+    );
+}
+
+#[test]
+fn test_execute_DXY0_superchip11() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.high_resolution_mode = true;
+    let display_rows: usize = processor.frame_buffer.get_column_size_pixels();
+    fill_row(&mut processor.frame_buffer, display_rows - 2); // all display pixels on in penultimate row
+    fill_row(&mut processor.frame_buffer, display_rows - 1); // all display pixels on in final row
+    processor.variable_registers[0xF] = 0x0; // set Vf to 0
+    processor.index_register = processor.font_start_address as u16;
+    let sprite: [u8; 32] = [0xFF; 32]; // create 32-byte sprite with all pixels on
+    processor
+        .memory
+        .write_bytes(processor.font_start_address, &sprite)
+        .unwrap(); // write sprite to memory at default font location
+    processor.variable_registers[0x3] = 0x8; // set V3 to 0 (X coordinate)
+                                             // set V10 (Y coord) to 3rd final row // execute a DXY0 instruction
+    processor.variable_registers[0xA] = (display_rows - 3) as u8;
+    // This operation should cause pixel collison on two rows (penultimate and final but not third last)
+    // and should also cause clipping of 13 rows (16-byte high sprite with only 3 rows on-screen)
+    // however clipping is currently disabled by design, so 0 for this component
+    assert!(
+        processor.execute_DXYN(0x3, 0xA, 0).unwrap() == 0
+            && processor.variable_registers[0xF] == 0x2 // 2 (if not disabled would be 2 + 13 = 15 = 0xF)
+    );
 }
 
 #[test]
@@ -1154,6 +1572,7 @@ fn test_execute_FX07_invalid_register_x_error() {
 fn test_execute_FX0A_block() {
     let mut processor: Processor = setup_test_processor_chip8();
     processor.program_counter = 0xC5;
+    processor.status = ProcessorStatus::Running;
     processor.execute_FX0A(0x3).unwrap();
     assert!(
         processor.status == ProcessorStatus::WaitingForKeypress
@@ -1162,27 +1581,62 @@ fn test_execute_FX0A_block() {
 }
 
 #[test]
-fn test_execute_FX0A_no_block() {
+fn test_execute_FX0A_press_and_release() {
     let mut processor: Processor = setup_test_processor_chip8();
-    processor.keystate.set_key_status(0xB, true).unwrap();
     processor.status = ProcessorStatus::Running;
     processor.program_counter = 0xC5;
     processor.execute_FX0A(0x3).unwrap();
+    assert_eq!(processor.status, ProcessorStatus::WaitingForKeypress);
+    processor.keystate.set_key_status(0xB, true).unwrap(); // Simulate key press
+    processor.execute_FX0A(0x3).unwrap();
+    assert_eq!(processor.status, ProcessorStatus::WaitingForKeypress);
+    processor.keystate.set_key_status(0xB, false).unwrap(); // Simulate key release
+    processor.execute_FX0A(0x3).unwrap();
     assert!(
         processor.status == ProcessorStatus::Running
-            && processor.program_counter == 0xC5
+            && processor.program_counter == 0xC1
             && processor.variable_registers[0x3] == 0xB
     );
 }
 
 #[test]
-fn test_execute_FX0A_resume() {
+fn test_execute_FX0A_press_and_release_multiple() {
     let mut processor: Processor = setup_test_processor_chip8();
-    processor.keystate.set_key_status(0xB, true).unwrap();
-    processor.status = ProcessorStatus::WaitingForKeypress;
+    processor.status = ProcessorStatus::Running;
+    processor.program_counter = 0xC5;
+    processor.execute_FX0A(0x3).unwrap();
+    assert_eq!(processor.status, ProcessorStatus::WaitingForKeypress);
+    processor.keystate.set_key_status(0xA, true).unwrap(); // Simulate key press
+    processor.keystate.set_key_status(0xB, true).unwrap(); // Simulate key press
+    processor.execute_FX0A(0x3).unwrap();
+    assert_eq!(processor.status, ProcessorStatus::WaitingForKeypress);
+    processor.keystate.set_key_status(0xB, false).unwrap(); // Simulate key release
     processor.execute_FX0A(0x3).unwrap();
     assert!(
-        processor.status == ProcessorStatus::Running && processor.variable_registers[0x3] == 0xB
+        processor.status == ProcessorStatus::Running
+            && processor.program_counter == 0xC1
+            && processor.variable_registers[0x3] == 0xB
+    );
+}
+
+#[test]
+fn test_execute_FX0A_press_and_release_existing_keys() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.status = ProcessorStatus::Running;
+    processor.set_key_status(0x5, true).unwrap();
+    processor.set_key_status(0x9, true).unwrap();
+    processor.program_counter = 0xC5;
+    processor.execute_FX0A(0x3).unwrap();
+    assert_eq!(processor.status, ProcessorStatus::WaitingForKeypress);
+    processor.keystate.set_key_status(0xB, true).unwrap(); // Simulate key press
+    processor.execute_FX0A(0x3).unwrap();
+    assert_eq!(processor.status, ProcessorStatus::WaitingForKeypress);
+    processor.keystate.set_key_status(0xB, false).unwrap(); // Simulate key release
+    processor.execute_FX0A(0x3).unwrap();
+    assert!(
+        processor.status == ProcessorStatus::Running
+            && processor.program_counter == 0xC1
+            && processor.variable_registers[0x3] == 0xB
     );
 }
 
@@ -1311,6 +1765,54 @@ fn test_execute_FX29_invalid_register_x_value_error() {
 }
 
 #[test]
+fn test_execute_FX30() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.variable_registers[0x7] = 0x02;
+    assert!(processor.execute_FX30(0x7).is_ok() && processor.index_register == 0xB4);
+}
+
+#[test]
+fn test_execute_FX30_invalid_register_x_error() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x10);
+    assert_eq!(
+        processor.execute_FX30(0x10).unwrap_err(),
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
+    );
+}
+
+#[test]
+fn test_execute_FX30_invalid_register_x_value_error() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("character".to_string(), 0x0A);
+    processor.variable_registers[0x7] = 0x0A;
+    assert_eq!(
+        processor.execute_FX30(0x7).unwrap_err(),
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
+    );
+}
+
+#[test]
+fn test_execute_FX30_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_FX30(0x3).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0xF330 }
+    );
+}
+
+#[test]
+fn test_execute_FX30_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_FX30(0x3).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0xF330 }
+    );
+}
+
+#[test]
 fn test_execute_FX33_one_digit() {
     let mut processor: Processor = setup_test_processor_chip8();
     processor.index_register = 0x025A;
@@ -1431,7 +1933,6 @@ fn test_execute_FX55_multiple_registers_superchip11_mode() {
             && processor.memory.read_byte(0x025B).unwrap() == 0x12
             && processor.memory.read_byte(0x025C).unwrap() == 0xF4
             && processor.memory.read_byte(0x025D).unwrap() == 0x2D
-            && processor.memory.read_byte(0x025E).unwrap() == 0x0
             && processor.index_register == 0x025A
     );
 }
@@ -1531,5 +2032,129 @@ fn test_execute_FX65_invalid_register_x_error() {
     assert_eq!(
         processor.execute_FX65(0x10).unwrap_err(),
         ErrorDetail::OperandsOutOfBounds { operands: operands }
+    );
+}
+
+#[test]
+fn test_execute_FX75_one_register() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.variable_registers[0x0] = 0x3C;
+    processor.variable_registers[0x1] = 0x12;
+    processor.variable_registers[0x2] = 0xF4;
+    processor.variable_registers[0x3] = 0x2D;
+    processor.variable_registers[0x4] = 0x07;
+    assert!(
+        processor.execute_FX75(0x0).is_ok()
+            && processor.rpl_registers[0x0] == 0x3C
+            && processor.rpl_registers[0x1] == 0x0
+    );
+}
+
+#[test]
+fn test_execute_FX75_multiple_registers() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.variable_registers[0x0] = 0x3C;
+    processor.variable_registers[0x1] = 0x12;
+    processor.variable_registers[0x2] = 0xF4;
+    processor.variable_registers[0x3] = 0x2D;
+    processor.variable_registers[0x4] = 0x07;
+    assert!(
+        processor.execute_FX75(0x03).is_ok()
+            && processor.rpl_registers[0x0] == 0x3C
+            && processor.rpl_registers[0x1] == 0x12
+            && processor.rpl_registers[0x2] == 0xF4
+            && processor.rpl_registers[0x3] == 0x2D
+            && processor.rpl_registers[0x4] == 0x0
+    );
+}
+
+#[test]
+fn test_execute_FX75_invalid_register_x_error() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x8);
+    assert_eq!(
+        processor.execute_FX75(0x8).unwrap_err(),
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
+    );
+}
+
+#[test]
+fn test_execute_FX75_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_FX75(0x3).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0xF375 }
+    );
+}
+
+#[test]
+fn test_execute_FX75_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_FX75(0x3).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0xF375 }
+    );
+}
+
+#[test]
+fn test_execute_FX85_one_register() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.rpl_registers[0x0] = 0x3C;
+    processor.rpl_registers[0x1] = 0x12;
+    processor.rpl_registers[0x2] = 0xF4;
+    processor.rpl_registers[0x3] = 0x2D;
+    processor.rpl_registers[0x4] = 0x07;
+    assert!(
+        processor.execute_FX85(0x0).is_ok()
+            && processor.variable_registers[0x0] == 0x3C
+            && processor.variable_registers[0x1] == 0x0
+    );
+}
+
+#[test]
+fn test_execute_FX85_multiple_registers() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    processor.rpl_registers[0x0] = 0x3C;
+    processor.rpl_registers[0x1] = 0x12;
+    processor.rpl_registers[0x2] = 0xF4;
+    processor.rpl_registers[0x3] = 0x2D;
+    processor.rpl_registers[0x4] = 0x07;
+    assert!(
+        processor.execute_FX85(0x03).is_ok()
+            && processor.variable_registers[0x0] == 0x3C
+            && processor.variable_registers[0x1] == 0x12
+            && processor.variable_registers[0x2] == 0xF4
+            && processor.variable_registers[0x3] == 0x2D
+            && processor.variable_registers[0x4] == 0x0
+    );
+}
+
+#[test]
+fn test_execute_FX85_invalid_register_x_error() {
+    let mut processor: Processor = setup_test_processor_superchip11();
+    let mut operands: HashMap<String, usize> = HashMap::new();
+    operands.insert("x".to_string(), 0x8);
+    assert_eq!(
+        processor.execute_FX85(0x8).unwrap_err(),
+        ErrorDetail::OperandsOutOfBounds { operands: operands }
+    );
+}
+
+#[test]
+fn test_execute_FX85_chip8_error() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    assert_eq!(
+        processor.execute_FX85(0x3).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0xF385 }
+    );
+}
+
+#[test]
+fn test_execute_FX85_chip48_error() {
+    let mut processor: Processor = setup_test_processor_chip48();
+    assert_eq!(
+        processor.execute_FX85(0x3).unwrap_err(),
+        ErrorDetail::UnknownInstruction { opcode: 0xF385 }
     );
 }

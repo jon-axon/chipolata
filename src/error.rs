@@ -79,14 +79,18 @@ impl fmt::Display for ChipolataError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let StateSnapshot::ExtendedSnapshot {
             frame_buffer: _,
+            status: _,
             stack: _,
             memory: _,
             program_counter,
             index_register: _,
             variable_registers: _,
+            rpl_registers: _,
             delay_timer: _,
             sound_timer: _,
             cycles,
+            high_resolution_mode: _,
+            emulation_level: _,
         } = &self.state_snapshot_dump
         {
             write!(
