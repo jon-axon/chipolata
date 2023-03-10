@@ -22,6 +22,15 @@ fn setup_test_processor_superchip11() -> Processor {
     Processor::initialise_and_load(program, options).unwrap()
 }
 
+fn setup_test_processor_superchip11_octo() -> Processor {
+    let program: Program = Program::default();
+    let mut options: Options = Options::default();
+    options.emulation_level = EmulationLevel::SuperChip11 {
+        octo_compatibility_mode: true,
+    };
+    Processor::initialise_and_load(program, options).unwrap()
+}
+
 #[test]
 fn test_load_font_data() {
     let mut processor: Processor = setup_test_processor_chip8();
@@ -487,7 +496,24 @@ fn test_execute_00FD_chip48_error() {
 fn test_execute_00FE() {
     let mut processor: Processor = setup_test_processor_superchip11();
     processor.high_resolution_mode = true;
-    assert!(processor.execute_00FE().is_ok() && processor.high_resolution_mode == false);
+    processor.frame_buffer[0][0] = 0xFF; // set some pixels
+    assert!(
+        processor.execute_00FE().is_ok()
+            && processor.high_resolution_mode == false
+            && processor.frame_buffer[0][0] == 0xFF // check the pixels are intact
+    );
+}
+
+#[test]
+fn test_execute_00FE_octo() {
+    let mut processor: Processor = setup_test_processor_superchip11_octo();
+    processor.high_resolution_mode = true;
+    processor.frame_buffer[0][0] = 0xFF; // set some pixels
+    assert!(
+        processor.execute_00FE().is_ok()
+            && processor.high_resolution_mode == false
+            && processor.frame_buffer[0][0] == 0x0 // check the pixels are reset
+    );
 }
 
 #[test]
@@ -512,7 +538,24 @@ fn test_execute_00FE_chip48_error() {
 fn test_execute_00FF() {
     let mut processor: Processor = setup_test_processor_superchip11();
     processor.high_resolution_mode = false;
-    assert!(processor.execute_00FF().is_ok() && processor.high_resolution_mode == true);
+    processor.frame_buffer[0][0] = 0xFF; // set some pixels
+    assert!(
+        processor.execute_00FF().is_ok()
+            && processor.high_resolution_mode == true
+            && processor.frame_buffer[0][0] == 0xFF // check the pixels are intact
+    );
+}
+
+#[test]
+fn test_execute_00FF_octo() {
+    let mut processor: Processor = setup_test_processor_superchip11_octo();
+    processor.high_resolution_mode = false;
+    processor.frame_buffer[0][0] = 0xFF; // set some pixels
+    assert!(
+        processor.execute_00FF().is_ok()
+            && processor.high_resolution_mode == true
+            && processor.frame_buffer[0][0] == 0x0 // check the pixels are reset
+    );
 }
 
 #[test]
@@ -852,6 +895,14 @@ fn test_execute_8XY4_overflow() {
 }
 
 #[test]
+fn test_execute_8XY4_flag_order() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.variable_registers[0xF] = 0xF2;
+    processor.variable_registers[0x7] = 0x16;
+    assert!(processor.execute_8XY4(0xF, 0x7).is_ok() && processor.variable_registers[0xF] == 0x01);
+}
+
+#[test]
 fn test_execute_8XY4_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
     let mut operands: HashMap<String, usize> = HashMap::new();
@@ -899,6 +950,14 @@ fn test_execute_8XY5_underflow() {
             && processor.variable_registers[0xE] == 0x24
             && processor.variable_registers[0xF] == 0x00
     );
+}
+
+#[test]
+fn test_execute_8XY5_flag_order() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.variable_registers[0xF] = 0xF2;
+    processor.variable_registers[0x7] = 0x16;
+    assert!(processor.execute_8XY5(0xF, 0x7).is_ok() && processor.variable_registers[0xF] == 0x01);
 }
 
 #[test]
@@ -1004,11 +1063,10 @@ fn test_execute_8XY6_0_shifted_superchip11_mode() {
 }
 
 #[test]
-fn test_execute_8XY6_Vf() {
+fn test_execute_8XY6_flag_order() {
     let mut processor: Processor = setup_test_processor_chip8();
-    processor.variable_registers[0xF] = 0xFF;
-    processor.variable_registers[0x7] = 0xFF;
     processor.variable_registers[0xF] = 0x44;
+    processor.variable_registers[0x7] = 0xFF;
     assert!(processor.execute_8XY6(0xF, 0x7).is_ok() && processor.variable_registers[0xF] == 0x01);
 }
 
@@ -1063,6 +1121,14 @@ fn test_execute_8XY7_underflow() {
 }
 
 #[test]
+fn test_execute_8XY7_flag_order() {
+    let mut processor: Processor = setup_test_processor_chip8();
+    processor.variable_registers[0xF] = 0x44;
+    processor.variable_registers[0x7] = 0xFF;
+    assert!(processor.execute_8XY7(0xF, 0x7).is_ok() && processor.variable_registers[0xF] == 0x01);
+}
+
+#[test]
 fn test_execute_8XY7_invalid_register_x_error() {
     let mut processor: Processor = setup_test_processor_chip8();
     let mut operands: HashMap<String, usize> = HashMap::new();
@@ -1113,11 +1179,10 @@ fn test_execute_8XYE_0_shifted() {
 }
 
 #[test]
-fn test_execute_8XYE_Vf() {
+fn test_execute_8XYE_flag_order() {
     let mut processor: Processor = setup_test_processor_chip8();
-    processor.variable_registers[0xF] = 0xFF;
-    processor.variable_registers[0x7] = 0xFF;
     processor.variable_registers[0xF] = 0x44;
+    processor.variable_registers[0x7] = 0xFF;
     assert!(processor.execute_8XYE(0xF, 0x7).is_ok() && processor.variable_registers[0xF] == 0x01);
 }
 
@@ -1769,6 +1834,13 @@ fn test_execute_FX30() {
     let mut processor: Processor = setup_test_processor_superchip11();
     processor.variable_registers[0x7] = 0x02;
     assert!(processor.execute_FX30(0x7).is_ok() && processor.index_register == 0xB4);
+}
+
+#[test]
+fn test_execute_FX30_octo() {
+    let mut processor: Processor = setup_test_processor_superchip11_octo();
+    processor.variable_registers[0x7] = 0x0A;
+    assert!(processor.execute_FX30(0x7).is_ok() && processor.index_register == 0x104);
 }
 
 #[test]

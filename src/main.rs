@@ -34,8 +34,7 @@ impl ChipolataApp {
     pub fn new() -> Self {
         let program_data =
         //    fs::read("F:\\Rust\\Projects\\chipolata\\roms\\superchip\\knight.ch8").unwrap();
-        //    fs::read("F:\\Rust\\Projects\\chipolata\\roms\\tests\\chip8-test-suite.ch8").unwrap();
-            fs::read("F:\\Rust\\Projects\\chipolata\\roms\\superchip\\joust").unwrap();
+        fs::read("F:\\Rust\\Projects\\chipolata\\roms\\tests\\chip8-test-suite (1).ch8").unwrap();
         let program: Program = Program::new(program_data);
         let mut options: Options = Options::default();
         options.processor_speed_hertz = 2500;
@@ -144,8 +143,8 @@ impl ChipolataApp {
                     for j in 0..column_pixels {
                         let colour: egui::Color32 = match frame_buffer[j][i / 8] & (128 >> (i % 8))
                         {
-                            0 => egui::Color32::KHAKI,
-                            _ => egui::Color32::DARK_GRAY,
+                            0 => egui::Color32::from_rgb(0x99, 0x66, 00),
+                            _ => egui::Color32::from_rgb(0xFF, 0xCC, 00),
                         };
                         painter.rect_filled(
                             egui::Rect::from_two_pos(
