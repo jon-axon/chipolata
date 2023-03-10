@@ -1,13 +1,11 @@
-use chipolata::EmulationLevel;
 use chipolata::Options;
 use chipolata::Processor;
 use chipolata::Program;
 use chipolata::StateSnapshot;
 use chipolata::StateSnapshotVerbosity;
-use chipolata::COSMAC_VIP_PROCESSOR_SPEED_HERTZ;
 use eframe::egui;
 use egui::*;
-use std::fs;
+use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
 
@@ -32,25 +30,24 @@ struct ChipolataApp {
 
 impl ChipolataApp {
     pub fn new() -> Self {
-        let program_data =
-        //    fs::read("F:\\Rust\\Projects\\chipolata\\roms\\superchip\\knight.ch8").unwrap();
-        fs::read("F:\\Rust\\Projects\\chipolata\\roms\\tests\\chip8-test-suite (1).ch8").unwrap();
-        let program: Program = Program::new(program_data);
-        let mut options: Options = Options::default();
-        options.processor_speed_hertz = 2500;
-        options.emulation_level = EmulationLevel::SuperChip11 {
-            octo_compatibility_mode: true,
-        };
-        // options.processor_speed_hertz = 2500;
-        // options.emulation_level = EmulationLevel::Chip8 {
-        //     memory_limit_2k: false,
-        //     variable_cycle_timing: false,
-        // };
-        // options.processor_speed_hertz = COSMAC_VIP_PROCESSOR_SPEED_HERTZ;
-        // options.emulation_level = EmulationLevel::Chip8 {
-        //     memory_limit_2k: false,
-        //     variable_cycle_timing: true,
-        // };
+        // let program_file: &str = "tests\\chip8-test-suite.ch8";
+        // let program_file: &str = "superchip\\SPACEFIG";
+        // let program_file: &str = "superchip\\knight.ch8";
+        let program_file: &str = "superchip\\binding.ch8";
+        let program: Program = Program::load_from_file(
+            &Path::new("F:\\Rust\\Projects\\chipolata\\resources\\roms").join(program_file),
+        )
+        .unwrap();
+        // let option_file: &str = "SCHIP-slow.json";
+        // let option_file: &str = "SCHIP-fast.json";
+        let option_file: &str = "SCHIP-octo.json";
+        // let option_file: &str = "VIP-slow.json";
+        // let option_file: &str = "VIP-fast.json";
+        // let option_file: &str = "VIP-variable.json";
+        let options: Options = Options::load_from_file(
+            &Path::new("F:\\Rust\\Projects\\chipolata\\resources\\options").join(option_file),
+        )
+        .unwrap();
         let mut processor = Processor::initialise_and_load(program, options).unwrap();
         let (proc_input_tx, proc_input_rx) = mpsc::channel();
         let (proc_output_tx, proc_output_rx) = mpsc::channel();

@@ -10,6 +10,7 @@ use super::options::Options;
 use super::program::Program;
 use super::stack::Stack;
 use rand::Rng;
+use serde_derive::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
 mod execute; // separate sub-module for all the instruction execution methods
@@ -34,7 +35,7 @@ const COSMAC_VIP_MACHINE_CYCLES_PER_CYCLE: u64 = 8;
 
 /// An enum to indicate which extension of CHIP-8 is to be emulated.  See external
 /// documentation for details of the differences in each case.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Deserialize, Serialize)]
 pub enum EmulationLevel {
     /// The original CHIP-8 interpreter for the RCA COSMAC VIP, optionally limited to 2k RAM
     /// and optionally set to simulate original COSMAC VIP cycles-per-instruction timings

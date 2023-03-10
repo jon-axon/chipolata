@@ -1,0 +1,10 @@
+{
+  "processor_speed_hertz": 2500,
+  "program_start_address": 512,
+  "font_start_address": 80,
+  "emulation_level": {
+    "SuperChip11": {
+      "octo_compatibility_mode": false
+    }
+  }
+}
