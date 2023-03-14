@@ -1,0 +1,11 @@
+{
+  "processor_speed_hertz": 2500,
+  "program_start_address": 512,
+  "font_start_address": 80,
+  "emulation_level": {
+    "Chip8": {
+      "memory_limit_2k": false,
+      "variable_cycle_timing": false
+    }
+  }
+}

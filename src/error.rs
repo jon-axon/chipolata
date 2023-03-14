@@ -25,6 +25,8 @@ pub enum ErrorDetail {
     MemoryAddressOutOfBounds { address: u16 },
     /// A key ordinal was referenced that is outside the valid CHIP-8 keypad range (0x0 to 0xF)
     InvalidKey { key: u8 },
+    /// Error used for any file I/O issues
+    FileError { file_path: String },
     /// General bucket for any unknown issues (to return *something* rather than panicking)
     UnknownError,
 }
@@ -56,6 +58,13 @@ impl fmt::Display for ErrorDetail {
             ErrorDetail::InvalidKey { key } => {
                 write!(f, "invalid key {} was specified", key)
             }
+            ErrorDetail::FileError { file_path } => {
+                write!(
+                    f,
+                    "invalid file path {} was specified",
+                    file_path.to_string()
+                )
+            }
             ErrorDetail::UnknownError => {
                 write!(f, "an unknown error occurred")
             }
@@ -80,6 +89,7 @@ impl fmt::Display for ChipolataError {
         if let StateSnapshot::ExtendedSnapshot {
             frame_buffer: _,
             status: _,
+            play_sound: _,
             stack: _,
             memory: _,
             program_counter,

@@ -1,4 +1,7 @@
-use crate::EmulationLevel;
+use crate::{EmulationLevel, ErrorDetail};
+use serde_derive::{Deserialize, Serialize};
+use std::fs::File;
+use std::path::Path;
 
 /// The original COSMAC VIP processor speed in hertz.  When instantiating an [Options] instance
 /// to pass to Chipolata, this value should normally be supplied as the starting
@@ -21,7 +24,7 @@ const DEFAULT_FONT_ADDRESS: u16 = 0x50;
 /// options is done through the [Options] struct, an instance of which is passed to
 /// [Processor::initialise_and_load()](crate::processor::Processor::initialise_and_load) when
 /// instantiating [Processor](crate::Processor).
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Options {
     /// The number of complete fetch->decode->execute cycles Chipolata will carry out per second
     /// while in default fixed cycle timing mode.  When emulating the variable length instruction
@@ -47,6 +50,37 @@ impl Options {
             font_start_address: DEFAULT_FONT_ADDRESS,
         }
     }
+
+    /// Builder method that instantiates Options from the specified JSON file
+    pub fn load_from_file(file_path: &Path) -> Result<Options, ErrorDetail> {
+        // attempt to open the file
+        if let Ok(json_file) = File::open(file_path) {
+            // parse the file as JSON and deserialise into an Options instance
+            if let Ok(options) = serde_json::from_reader(json_file) {
+                return Ok(options);
+            }
+        }
+        // if we fall through to here, an error has occurred reading from the file
+        return Err(ErrorDetail::FileError {
+            file_path: file_path.to_str().unwrap_or_default().to_owned(),
+        });
+    }
+
+    /// Method that serialises the passed [Options] instance to the specified JSON file
+    pub fn save_to_file(options: &Options, file_path: &Path) -> Result<(), ErrorDetail> {
+        // attempt to open the file; create it if it does not exist and truncate if it does
+        if let Ok(_) = File::create(file_path) {
+            if let Ok(serialised_options) = serde_json::to_string_pretty(options) {
+                if std::fs::write(file_path, serialised_options).is_ok() {
+                    return Ok(());
+                }
+            }
+        }
+        // if we fall through to here, an error has occurred writing to the file
+        return Err(ErrorDetail::FileError {
+            file_path: file_path.to_str().unwrap_or_default().to_owned(),
+        });
+    }
 }
 
 impl Default for Options {
@@ -61,5 +95,20 @@ impl Default for Options {
                 variable_cycle_timing: false,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_save_load() {
+        const FILENAME: &str = "unit_test_save_load.json";
+        let options: Options = Options::default();
+        Options::save_to_file(&options, Path::new(FILENAME)).unwrap();
+        let new_options = Options::load_from_file(Path::new(FILENAME)).unwrap();
+        assert_eq!(options, new_options);
+        std::fs::remove_file(FILENAME).unwrap();
     }
 }

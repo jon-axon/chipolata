@@ -10,6 +10,7 @@ use super::options::Options;
 use super::program::Program;
 use super::stack::Stack;
 use rand::Rng;
+use serde_derive::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
 mod execute; // separate sub-module for all the instruction execution methods
@@ -34,7 +35,7 @@ const COSMAC_VIP_MACHINE_CYCLES_PER_CYCLE: u64 = 8;
 
 /// An enum to indicate which extension of CHIP-8 is to be emulated.  See external
 /// documentation for details of the differences in each case.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Deserialize, Serialize)]
 pub enum EmulationLevel {
     /// The original CHIP-8 interpreter for the RCA COSMAC VIP, optionally limited to 2k RAM
     /// and optionally set to simulate original COSMAC VIP cycles-per-instruction timings
@@ -82,16 +83,19 @@ pub enum StateSnapshotVerbosity {
 /// returned to hosting applications for processing
 #[derive(Debug, PartialEq)]
 pub enum StateSnapshot {
-    /// Minimal snapshot containing only the frame buffer state
+    /// Minimal snapshot containing only the frame buffer state, processor status, and a boolean
+    /// to indicate whether a sound should be playing
     MinimalSnapshot {
         frame_buffer: Display,
         status: ProcessorStatus,
+        play_sound: bool,
     },
-    /// Extended snapshot containing the frame buffer state along with all registers,
+    /// Extended snapshot containing the minimal state along with all registers,
     /// stack and memory
     ExtendedSnapshot {
         frame_buffer: Display,
         status: ProcessorStatus,
+        play_sound: bool,
         stack: Stack,
         memory: Memory,
         program_counter: u16,
@@ -247,10 +251,12 @@ impl Processor {
             StateSnapshotVerbosity::Minimal => StateSnapshot::MinimalSnapshot {
                 frame_buffer: self.frame_buffer.clone(),
                 status: self.status,
+                play_sound: self.sound_timer_active(),
             },
             StateSnapshotVerbosity::Extended => StateSnapshot::ExtendedSnapshot {
                 frame_buffer: self.frame_buffer.clone(),
                 status: self.status,
+                play_sound: self.sound_timer_active(),
                 stack: self.stack.clone(),
                 memory: self.memory.clone(),
                 program_counter: self.program_counter,
@@ -325,7 +331,7 @@ impl Processor {
     /// then return an [ErrorDetail::MemoryAddressOutOfBounds].
     fn load_program(&mut self) -> Result<(), ErrorDetail> {
         if self.program_start_address + self.program.program_data_size()
-            >= self.memory.max_addressable_size()
+            > self.memory.max_addressable_size()
         {
             return Err(ErrorDetail::MemoryAddressOutOfBounds {
                 address: (self.program_start_address + self.program.program_data_size()) as u16,
