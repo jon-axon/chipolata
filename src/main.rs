@@ -25,17 +25,25 @@ fn main() -> Result<(), eframe::Error> {
     )
 }
 
+enum MessageToChipolata {
+    ReadyForStateSnapshot { verbosity: StateSnapshotVerbosity },
+    KeyPressEvent { key: u8, pressed: bool },
+}
+
+enum MessageFromChipolata {
+    StateSnapshotReport { snapshot: StateSnapshot },
+}
+
 struct ChipolataApp {
-    proc_input_tx: mpsc::Sender<(u8, bool)>,
-    proc_output_rx: mpsc::Receiver<StateSnapshot>,
-    proc_ready_tx: mpsc::Sender<StateSnapshotVerbosity>,
+    message_to_chipolata_tx: mpsc::Sender<MessageToChipolata>,
+    message_from_chipolata_rx: mpsc::Receiver<MessageFromChipolata>,
     audio_stream: Audio,
 }
 
 impl ChipolataApp {
     pub fn new() -> Self {
-        let program_file: &str = "tests\\chip8-test-suite.ch8";
-        // let program_file: &str = "superchip\\SPACEFIG.ch8";
+        // let program_file: &str = "tests\\chip8-test-suite.ch8";
+        let program_file: &str = "superchip\\SPACEFIG.ch8";
         // let program_file: &str = "superchip\\knight.ch8";
         // let program_file: &str = "superchip\\binding.ch8";
         // let program_file: &str = "superchip\\JOUST.ch8";
@@ -54,24 +62,37 @@ impl ChipolataApp {
         )
         .unwrap();
         let mut processor = Processor::initialise_and_load(program, options).unwrap();
-        let (proc_input_tx, proc_input_rx) = mpsc::channel();
-        let (proc_output_tx, proc_output_rx) = mpsc::channel();
-        let (proc_ready_tx, proc_ready_rx) = mpsc::channel();
+        // Prepare cross-thread communication channels between UI and Chipolata
+        let (message_to_chipolata_tx, message_to_chipolata_rx) = mpsc::channel();
+        let (message_from_chipolata_tx, message_from_chipolata_rx) = mpsc::channel();
 
         let app = ChipolataApp {
-            proc_input_tx,
-            proc_output_rx,
-            proc_ready_tx,
+            message_to_chipolata_tx,
+            message_from_chipolata_rx,
             audio_stream: Audio::new(),
         };
         thread::spawn(move || loop {
-            for (received, pressed) in proc_input_rx.try_iter() {
-                processor.set_key_status(received, pressed).unwrap();
+            let mut ui_ready_for_update: bool = false;
+            let mut snapshot_verbosity: StateSnapshotVerbosity = StateSnapshotVerbosity::Minimal;
+            // Process any messages waiting from UI
+            for message_to_chipolata in message_to_chipolata_rx.try_iter() {
+                match message_to_chipolata {
+                    MessageToChipolata::KeyPressEvent { key, pressed } => {
+                        processor.set_key_status(key, pressed).unwrap()
+                    }
+                    MessageToChipolata::ReadyForStateSnapshot { verbosity } => {
+                        ui_ready_for_update = true;
+                        snapshot_verbosity = verbosity;
+                    }
+                }
             }
+            // Run a Chipolata processor cycle
             processor.execute_cycle().unwrap();
-            if proc_ready_rx.try_recv().is_ok() {
-                proc_output_tx
-                    .send(processor.export_state_snapshot(StateSnapshotVerbosity::Minimal))
+            // Send a state snapshot update back to UI if requested
+            if ui_ready_for_update {
+                let snapshot = processor.export_state_snapshot(snapshot_verbosity);
+                message_from_chipolata_tx
+                    .send(MessageFromChipolata::StateSnapshotReport { snapshot })
                     .unwrap();
             }
         });
@@ -82,26 +103,36 @@ impl ChipolataApp {
 impl eframe::App for ChipolataApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.proc_ready_tx
-                .send(StateSnapshotVerbosity::Minimal)
+            // Inform Chipolata the UI is ready for a state snapshot update
+            self.message_to_chipolata_tx
+                .send(MessageToChipolata::ReadyForStateSnapshot {
+                    verbosity: StateSnapshotVerbosity::Minimal,
+                })
                 .unwrap();
+            // Check for key press events
             self.handle_input(ctx);
-            if let Ok(disp) = self.proc_output_rx.try_recv() {
+            // Process any received state snapshot update from Chipolata
+            if let Ok(MessageFromChipolata::StateSnapshotReport { snapshot }) =
+                self.message_from_chipolata_rx.try_recv()
+            {
                 if let StateSnapshot::MinimalSnapshot {
                     frame_buffer,
                     status: _,
                     play_sound,
-                } = disp
+                } = snapshot
                 {
+                    // Pause / resume audio if required
                     match (play_sound, self.audio_stream.is_paused()) {
                         (true, true) => self.audio_stream.play(),
                         (false, false) => self.audio_stream.pause(),
                         _ => (),
                     }
+                    // Refresh the UI
                     ChipolataApp::render_ui(frame_buffer, ui, frame);
                 }
             }
         });
+        // Update UI again as soon as possible
         ctx.request_repaint();
     }
 }
@@ -119,26 +150,32 @@ impl ChipolataApp {
                 .collect();
             for (key, state) in key_events {
                 match key {
-                    Key::Num1 => self.proc_input_tx.send((0x1, *state)).unwrap(),
-                    Key::Num2 => self.proc_input_tx.send((0x2, *state)).unwrap(),
-                    Key::Num3 => self.proc_input_tx.send((0x3, *state)).unwrap(),
-                    Key::Num4 => self.proc_input_tx.send((0xC, *state)).unwrap(),
-                    Key::Q => self.proc_input_tx.send((0x4, *state)).unwrap(),
-                    Key::W => self.proc_input_tx.send((0x5, *state)).unwrap(),
-                    Key::E => self.proc_input_tx.send((0x6, *state)).unwrap(),
-                    Key::R => self.proc_input_tx.send((0xD, *state)).unwrap(),
-                    Key::A => self.proc_input_tx.send((0x7, *state)).unwrap(),
-                    Key::S => self.proc_input_tx.send((0x8, *state)).unwrap(),
-                    Key::D => self.proc_input_tx.send((0x9, *state)).unwrap(),
-                    Key::F => self.proc_input_tx.send((0xE, *state)).unwrap(),
-                    Key::Z => self.proc_input_tx.send((0xA, *state)).unwrap(),
-                    Key::X => self.proc_input_tx.send((0x0, *state)).unwrap(),
-                    Key::C => self.proc_input_tx.send((0xB, *state)).unwrap(),
-                    Key::V => self.proc_input_tx.send((0xF, *state)).unwrap(),
+                    Key::Num1 => self.send_key_press_event(0x1, *state),
+                    Key::Num2 => self.send_key_press_event(0x2, *state),
+                    Key::Num3 => self.send_key_press_event(0x3, *state),
+                    Key::Num4 => self.send_key_press_event(0xC, *state),
+                    Key::Q => self.send_key_press_event(0x4, *state),
+                    Key::W => self.send_key_press_event(0x5, *state),
+                    Key::E => self.send_key_press_event(0x6, *state),
+                    Key::R => self.send_key_press_event(0xD, *state),
+                    Key::A => self.send_key_press_event(0x7, *state),
+                    Key::S => self.send_key_press_event(0x8, *state),
+                    Key::D => self.send_key_press_event(0x9, *state),
+                    Key::F => self.send_key_press_event(0xE, *state),
+                    Key::Z => self.send_key_press_event(0xA, *state),
+                    Key::X => self.send_key_press_event(0x0, *state),
+                    Key::C => self.send_key_press_event(0xB, *state),
+                    Key::V => self.send_key_press_event(0xF, *state),
                     _ => (),
                 }
             }
         });
+    }
+
+    fn send_key_press_event(&mut self, key: u8, pressed: bool) {
+        self.message_to_chipolata_tx
+            .send(MessageToChipolata::KeyPressEvent { key, pressed })
+            .unwrap();
     }
 
     fn render_ui(frame_buffer: chipolata::Display, ui: &mut Ui, frame: &eframe::Frame) {
