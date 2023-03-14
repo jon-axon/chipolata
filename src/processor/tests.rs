@@ -159,6 +159,7 @@ fn test_export_state_snapshot_minimal() {
                 StateSnapshot::MinimalSnapshot {
                     frame_buffer,
                     status: _,
+                    play_sound: _,
                 } => frame_buffer[0][0] == 0xC3,
                 _ => false,
             }
@@ -188,6 +189,7 @@ fn test_state_snapshot_verbose() {
                 StateSnapshot::ExtendedSnapshot {
                     frame_buffer,
                     status,
+                    play_sound: _,
                     program_counter,
                     index_register,
                     variable_registers,

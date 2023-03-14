@@ -89,6 +89,7 @@ impl fmt::Display for ChipolataError {
         if let StateSnapshot::ExtendedSnapshot {
             frame_buffer: _,
             status: _,
+            play_sound: _,
             stack: _,
             memory: _,
             program_counter,

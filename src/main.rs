@@ -1,3 +1,4 @@
+use audio::Audio;
 use chipolata::Options;
 use chipolata::Processor;
 use chipolata::Program;
@@ -9,12 +10,14 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
 
-const WIDTH: f32 = 960.;
-const HEIGHT: f32 = 480.;
+mod audio;
+
+const INITIAL_WIDTH: f32 = 960.;
+const INITIAL_HEIGHT: f32 = 480.;
 
 fn main() -> Result<(), eframe::Error> {
     let mut options = eframe::NativeOptions::default();
-    options.initial_window_size = Some(Vec2::from((WIDTH, HEIGHT)));
+    options.initial_window_size = Some(Vec2::from((INITIAL_WIDTH, INITIAL_HEIGHT)));
     eframe::run_native(
         "Chipolata: CHIP-8 emulator",
         options,
@@ -26,14 +29,16 @@ struct ChipolataApp {
     proc_input_tx: mpsc::Sender<(u8, bool)>,
     proc_output_rx: mpsc::Receiver<StateSnapshot>,
     proc_ready_tx: mpsc::Sender<StateSnapshotVerbosity>,
+    audio_stream: Audio,
 }
 
 impl ChipolataApp {
     pub fn new() -> Self {
-        // let program_file: &str = "tests\\chip8-test-suite.ch8";
-        // let program_file: &str = "superchip\\SPACEFIG";
+        let program_file: &str = "tests\\chip8-test-suite.ch8";
+        // let program_file: &str = "superchip\\SPACEFIG.ch8";
         // let program_file: &str = "superchip\\knight.ch8";
-        let program_file: &str = "superchip\\binding.ch8";
+        // let program_file: &str = "superchip\\binding.ch8";
+        // let program_file: &str = "superchip\\JOUST.ch8";
         let program: Program = Program::load_from_file(
             &Path::new("F:\\Rust\\Projects\\chipolata\\resources\\roms").join(program_file),
         )
@@ -52,10 +57,12 @@ impl ChipolataApp {
         let (proc_input_tx, proc_input_rx) = mpsc::channel();
         let (proc_output_tx, proc_output_rx) = mpsc::channel();
         let (proc_ready_tx, proc_ready_rx) = mpsc::channel();
+
         let app = ChipolataApp {
-            proc_input_tx: proc_input_tx,
-            proc_output_rx: proc_output_rx,
-            proc_ready_tx: proc_ready_tx,
+            proc_input_tx,
+            proc_output_rx,
+            proc_ready_tx,
+            audio_stream: Audio::new(),
         };
         thread::spawn(move || loop {
             for (received, pressed) in proc_input_rx.try_iter() {
@@ -73,14 +80,27 @@ impl ChipolataApp {
 }
 
 impl eframe::App for ChipolataApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.proc_ready_tx
                 .send(StateSnapshotVerbosity::Minimal)
                 .unwrap();
             self.handle_input(ctx);
-            //self.play_sound(ctx);
-            self.render_ui(ui);
+            if let Ok(disp) = self.proc_output_rx.try_recv() {
+                if let StateSnapshot::MinimalSnapshot {
+                    frame_buffer,
+                    status: _,
+                    play_sound,
+                } = disp
+                {
+                    match (play_sound, self.audio_stream.is_paused()) {
+                        (true, true) => self.audio_stream.play(),
+                        (false, false) => self.audio_stream.pause(),
+                        _ => (),
+                    }
+                    ChipolataApp::render_ui(frame_buffer, ui, frame);
+                }
+            }
         });
         ctx.request_repaint();
     }
@@ -121,41 +141,28 @@ impl ChipolataApp {
         });
     }
 
-    fn play_sound(&mut self, ctx: &egui::Context) {
-        todo!();
-    }
-
-    fn render_ui(&mut self, ui: &mut Ui) {
+    fn render_ui(frame_buffer: chipolata::Display, ui: &mut Ui, frame: &eframe::Frame) {
         let painter = ui.painter();
-        if let Ok(disp) = self.proc_output_rx.try_recv() {
-            if let StateSnapshot::MinimalSnapshot {
-                frame_buffer,
-                status: _,
-            } = disp
-            {
-                let row_pixels: usize = frame_buffer.get_row_size_bytes() * 8;
-                let column_pixels: usize = frame_buffer.get_column_size_pixels();
-                let pixel_size: f32 = (WIDTH as usize / row_pixels) as f32;
-                for i in 0..row_pixels {
-                    for j in 0..column_pixels {
-                        let colour: egui::Color32 = match frame_buffer[j][i / 8] & (128 >> (i % 8))
-                        {
-                            0 => egui::Color32::from_rgb(0x99, 0x66, 00),
-                            _ => egui::Color32::from_rgb(0xFF, 0xCC, 00),
-                        };
-                        painter.rect_filled(
-                            egui::Rect::from_two_pos(
-                                Pos2::from((i as f32 * pixel_size, j as f32 * pixel_size)),
-                                Pos2::from((
-                                    (i + 1) as f32 * pixel_size,
-                                    (j + 1) as f32 * pixel_size,
-                                )),
-                            ),
-                            egui::Rounding::none(),
-                            colour,
-                        );
-                    }
-                }
+        let row_pixels: usize = frame_buffer.get_row_size_bytes() * 8;
+        let column_pixels: usize = frame_buffer.get_column_size_pixels();
+        let pixel_width: f32 = frame.info().window_info.size[0] / (row_pixels as f32);
+        let pixel_height: f32 = frame.info().window_info.size[1] / (column_pixels as f32);
+        for i in 0..row_pixels {
+            for j in 0..column_pixels {
+                let colour: egui::Color32 = match frame_buffer[j][i / 8] & (128 >> (i % 8)) {
+                    0 => egui::Color32::from_rgb(0x99, 0x66, 00),
+                    _ => egui::Color32::from_rgb(0xFF, 0xCC, 00),
+                };
+                let stroke: egui::Stroke = Stroke::new(1., colour);
+                painter.rect(
+                    egui::Rect::from_two_pos(
+                        Pos2::from((i as f32 * pixel_width, j as f32 * pixel_height)),
+                        Pos2::from(((i + 1) as f32 * pixel_width, (j + 1) as f32 * pixel_height)),
+                    ),
+                    egui::Rounding::none(),
+                    colour,
+                    stroke,
+                );
             }
         }
     }

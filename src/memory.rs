@@ -36,10 +36,6 @@ impl Memory {
         // For SUPER-CHIP 1.1 emulation, assign each memory slot a random byte value
         if let EmulationLevel::SuperChip11 { .. } = emulation_level {
             rand::thread_rng().fill(&mut bytes[..]);
-            // let mut rng = rand::thread_rng();
-            // for slot in bytes.iter_mut() {
-            //     *slot = rng.gen();
-            // }
         }
         Self {
             bytes,
