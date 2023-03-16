@@ -66,6 +66,8 @@ pub enum ProcessorStatus {
     WaitingForKeypress,
     /// The processor is in an error state, having generated an `Error`
     Crashed,
+    /// Execution paused (by host)
+    Paused,
     /// Execution copmpleted (program exited); SUPER-CHIP emulation mode only
     Completed,
 }
@@ -88,6 +90,7 @@ pub enum StateSnapshot {
     MinimalSnapshot {
         frame_buffer: Display,
         status: ProcessorStatus,
+        processor_speed: u64,
         play_sound: bool,
     },
     /// Extended snapshot containing the minimal state along with all registers,
@@ -95,6 +98,7 @@ pub enum StateSnapshot {
     ExtendedSnapshot {
         frame_buffer: Display,
         status: ProcessorStatus,
+        processor_speed: u64,
         play_sound: bool,
         stack: Stack,
         memory: Memory,
@@ -234,6 +238,48 @@ impl Processor {
         self.processor_speed_hertz
     }
 
+    /// Sets the processor to a paused state (no cycles will execute)
+    pub fn pause_execution(&mut self) -> Result<(), ChipolataError> {
+        match self.status {
+            ProcessorStatus::ProgramLoaded
+            | ProcessorStatus::Running
+            | ProcessorStatus::WaitingForKeypress
+            | ProcessorStatus::Paused => {
+                self.status = ProcessorStatus::Paused;
+                Ok(())
+            }
+            ProcessorStatus::StartingUp
+            | ProcessorStatus::Initialised
+            | ProcessorStatus::Completed
+            | ProcessorStatus::Crashed => {
+                return Err(self.crash(ErrorDetail::StateTransitionError {
+                    old_state: self.status,
+                    new_state: ProcessorStatus::Paused,
+                }));
+            }
+        }
+    }
+
+    /// Sets the processor to a running state, if paused
+    pub fn resume_execution(&mut self) -> Result<(), ChipolataError> {
+        match self.status {
+            ProcessorStatus::ProgramLoaded | ProcessorStatus::Paused | ProcessorStatus::Running => {
+                self.status = ProcessorStatus::Running;
+                Ok(())
+            }
+            ProcessorStatus::StartingUp
+            | ProcessorStatus::Initialised
+            | ProcessorStatus::WaitingForKeypress
+            | ProcessorStatus::Completed
+            | ProcessorStatus::Crashed => {
+                return Err(self.crash(ErrorDetail::StateTransitionError {
+                    old_state: self.status,
+                    new_state: ProcessorStatus::Running,
+                }));
+            }
+        }
+    }
+
     /// Returns a copy of the current state of Chipolata.
     ///
     /// The minimal level of state reporting returns just a copy of the [Display] frame buffer
@@ -251,11 +297,13 @@ impl Processor {
             StateSnapshotVerbosity::Minimal => StateSnapshot::MinimalSnapshot {
                 frame_buffer: self.frame_buffer.clone(),
                 status: self.status,
+                processor_speed: self.processor_speed_hertz,
                 play_sound: self.sound_timer_active(),
             },
             StateSnapshotVerbosity::Extended => StateSnapshot::ExtendedSnapshot {
                 frame_buffer: self.frame_buffer.clone(),
                 status: self.status,
+                processor_speed: self.processor_speed_hertz,
                 play_sound: self.sound_timer_active(),
                 stack: self.stack.clone(),
                 memory: self.memory.clone(),
@@ -358,6 +406,7 @@ impl Processor {
         // Change processor status if appropriate
         match self.status {
             ProcessorStatus::ProgramLoaded => self.status = ProcessorStatus::Running,
+            ProcessorStatus::Paused => return Ok(false),
             ProcessorStatus::Running | ProcessorStatus::WaitingForKeypress => {
                 // no change
             }
@@ -365,7 +414,10 @@ impl Processor {
             | ProcessorStatus::Initialised
             | ProcessorStatus::Completed
             | ProcessorStatus::Crashed => {
-                return Err(self.crash(ErrorDetail::UnknownError));
+                return Err(self.crash(ErrorDetail::StateTransitionError {
+                    old_state: self.status,
+                    new_state: ProcessorStatus::Running,
+                }));
             }
         }
         // Increment the cycles counter

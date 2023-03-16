@@ -1,3 +1,4 @@
+use crate::ProcessorStatus;
 use crate::StateSnapshot;
 use std::collections::HashMap;
 use std::error;
@@ -27,6 +28,11 @@ pub enum ErrorDetail {
     InvalidKey { key: u8 },
     /// Error used for any file I/O issues
     FileError { file_path: String },
+    /// Error causes by invalid processor state transition
+    StateTransitionError {
+        old_state: ProcessorStatus,
+        new_state: ProcessorStatus,
+    },
     /// General bucket for any unknown issues (to return *something* rather than panicking)
     UnknownError,
 }
@@ -65,6 +71,16 @@ impl fmt::Display for ErrorDetail {
                     file_path.to_string()
                 )
             }
+            ErrorDetail::StateTransitionError {
+                old_state,
+                new_state,
+            } => {
+                write!(
+                    f,
+                    "invalid state transition from {:?} to {:?} was triggered",
+                    old_state, new_state
+                )
+            }
             ErrorDetail::UnknownError => {
                 write!(f, "an unknown error occurred")
             }
@@ -89,6 +105,7 @@ impl fmt::Display for ChipolataError {
         if let StateSnapshot::ExtendedSnapshot {
             frame_buffer: _,
             status: _,
+            processor_speed: _,
             play_sound: _,
             stack: _,
             memory: _,

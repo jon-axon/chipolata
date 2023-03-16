@@ -159,6 +159,7 @@ fn test_export_state_snapshot_minimal() {
                 StateSnapshot::MinimalSnapshot {
                     frame_buffer,
                     status: _,
+                    processor_speed: _,
                     play_sound: _,
                 } => frame_buffer[0][0] == 0xC3,
                 _ => false,
@@ -189,6 +190,7 @@ fn test_state_snapshot_verbose() {
                 StateSnapshot::ExtendedSnapshot {
                     frame_buffer,
                     status,
+                    processor_speed,
                     play_sound: _,
                     program_counter,
                     index_register,
@@ -204,6 +206,7 @@ fn test_state_snapshot_verbose() {
                 } =>
                     frame_buffer[0][0] == 0xC3
                         && status == ProcessorStatus::Running
+                        && processor_speed == 720
                         && program_counter == 0x1DF1
                         && index_register == 0x3CC2
                         && variable_registers[0x4] == 0xB2
