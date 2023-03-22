@@ -161,6 +161,7 @@ fn test_export_state_snapshot_minimal() {
                     status: _,
                     processor_speed: _,
                     play_sound: _,
+                    cycles: _,
                 } => frame_buffer[0][0] == 0xC3,
                 _ => false,
             }

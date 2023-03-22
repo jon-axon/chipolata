@@ -92,6 +92,7 @@ pub enum StateSnapshot {
         status: ProcessorStatus,
         processor_speed: u64,
         play_sound: bool,
+        cycles: usize,
     },
     /// Extended snapshot containing the minimal state along with all registers,
     /// stack and memory
@@ -100,6 +101,7 @@ pub enum StateSnapshot {
         status: ProcessorStatus,
         processor_speed: u64,
         play_sound: bool,
+        cycles: usize,
         stack: Stack,
         memory: Memory,
         program_counter: u16,
@@ -108,7 +110,6 @@ pub enum StateSnapshot {
         rpl_registers: [u8; RPL_REGISTER_COUNT],
         delay_timer: u8,
         sound_timer: u8,
-        cycles: usize,
         high_resolution_mode: bool,
         emulation_level: EmulationLevel,
     },
@@ -299,6 +300,7 @@ impl Processor {
                 status: self.status,
                 processor_speed: self.processor_speed_hertz,
                 play_sound: self.sound_timer_active(),
+                cycles: self.cycles,
             },
             StateSnapshotVerbosity::Extended => StateSnapshot::ExtendedSnapshot {
                 frame_buffer: self.frame_buffer.clone(),
