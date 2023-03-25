@@ -15,13 +15,7 @@ jobs:
  
       - name: Build Documentation
         run: cargo doc --all --no-deps
-    
-      - name: Create Index File
-        shell: cmd
-        run: |
-          cd target/doc
-          echo|set /p="<meta http-equiv="refresh" content="0; url=chipolata/index.html">" > index.html
-          
+              
       - name: Deploy Documentation
         uses: peaceiris/actions-gh-pages@v3
         with:
