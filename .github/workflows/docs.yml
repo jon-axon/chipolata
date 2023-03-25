@@ -12,6 +12,7 @@ jobs:
       run: cargo doc --release --no-deps
     - name: Publish Docs    
       run: |
+        shell: cmd
         cd target/doc
         git init
         echo|set /p="<meta http-equiv="refresh" content="0; url=chipolata/index.html">" > index.html
