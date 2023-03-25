@@ -7,8 +7,8 @@ on:
       - development
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  test_and_build:
+    runs-on: windows-latest
     steps:
     - uses: actions/checkout@v3
     - name: Test
