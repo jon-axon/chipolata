@@ -10,10 +10,10 @@ use std::path::Path;
 /// to be true.
 pub const COSMAC_VIP_PROCESSOR_SPEED_HERTZ: u64 = 1760900;
 /// The default CHIP-8 processor speed in hertz
-const DEFAULT_PROCESSOR_SPEED_HERTZ: u64 = 720;
-/// The default CHIP-8 program start address within memory.
+const DEFAULT_PROCESSOR_SPEED_HERTZ: u64 = 1000;
+/// The default CHIP-8 program start address within memory
 const DEFAULT_PROGRAM_ADDRESS: u16 = 0x200;
-/// The default CHIP-8 font start address within memory.
+/// The default CHIP-8 font start address within memory
 const DEFAULT_FONT_ADDRESS: u16 = 0x50;
 
 /// A struct to allow specification of Chipolata start-up parameters.
@@ -84,15 +84,14 @@ impl Options {
 }
 
 impl Default for Options {
-    /// Constructor that returns an [Options] instance using typical default settings.
+    /// Constructor that returns an [Options] instance using typical default settings
     fn default() -> Self {
         Options {
             processor_speed_hertz: DEFAULT_PROCESSOR_SPEED_HERTZ,
             program_start_address: DEFAULT_PROGRAM_ADDRESS,
             font_start_address: DEFAULT_FONT_ADDRESS,
-            emulation_level: EmulationLevel::Chip8 {
-                memory_limit_2k: false,
-                variable_cycle_timing: false,
+            emulation_level: EmulationLevel::SuperChip11 {
+                octo_compatibility_mode: false,
             },
         }
     }

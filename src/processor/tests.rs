@@ -3,7 +3,12 @@ use std::collections::HashMap;
 
 fn setup_test_processor_chip8() -> Processor {
     let program: Program = Program::default();
-    Processor::initialise_and_load(program, Options::default()).unwrap()
+    let mut options: Options = Options::default();
+    options.emulation_level = EmulationLevel::Chip8 {
+        memory_limit_2k: false,
+        variable_cycle_timing: false,
+    };
+    Processor::initialise_and_load(program, options).unwrap()
 }
 
 fn setup_test_processor_chip48() -> Processor {
@@ -151,6 +156,7 @@ fn test_load_program_overflow_error() {
 fn test_export_state_snapshot_minimal() {
     let mut processor: Processor = setup_test_processor_chip8();
     processor.frame_buffer[0][0] = 0xC3;
+    processor.cycles = 37;
     let state_snapshot: StateSnapshot =
         processor.export_state_snapshot(StateSnapshotVerbosity::Minimal);
     assert!(
@@ -159,8 +165,10 @@ fn test_export_state_snapshot_minimal() {
                 StateSnapshot::MinimalSnapshot {
                     frame_buffer,
                     status: _,
+                    processor_speed: _,
                     play_sound: _,
-                } => frame_buffer[0][0] == 0xC3,
+                    cycles,
+                } => (frame_buffer[0][0] == 0xC3) && (cycles == 37),
                 _ => false,
             }
     );
@@ -171,6 +179,7 @@ fn test_state_snapshot_verbose() {
     let mut processor: Processor = setup_test_processor_chip8();
     processor.frame_buffer[0][0] = 0xC3;
     processor.status = ProcessorStatus::Running;
+    processor.set_processor_speed(2635);
     processor.program_counter = 0x1DF1;
     processor.index_register = 0x3CC2;
     processor.variable_registers[0x4] = 0xB2;
@@ -189,6 +198,7 @@ fn test_state_snapshot_verbose() {
                 StateSnapshot::ExtendedSnapshot {
                     frame_buffer,
                     status,
+                    processor_speed,
                     play_sound: _,
                     program_counter,
                     index_register,
@@ -204,6 +214,7 @@ fn test_state_snapshot_verbose() {
                 } =>
                     frame_buffer[0][0] == 0xC3
                         && status == ProcessorStatus::Running
+                        && processor_speed == 2635
                         && program_counter == 0x1DF1
                         && index_register == 0x3CC2
                         && variable_registers[0x4] == 0xB2

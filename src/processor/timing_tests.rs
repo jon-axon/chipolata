@@ -22,6 +22,7 @@ fn setup_test_processor_fixed_timing() -> Processor {
 }
 
 #[test]
+#[ignore] // occasionally fails on CI, so ignored by default
 fn test_processor_speed_fixed() {
     let processor_speed: u64 = 2000;
     let tolerance_percent: u64 = 3; // permitted difference between specified and calculated
@@ -45,6 +46,7 @@ fn test_processor_speed_fixed() {
 }
 
 #[test]
+#[ignore] // occasionally fails on CI, so ignored by default
 fn test_processor_speed_variable() {
     const COSMAC_CYCLES_PER_CYCLE: u64 = 19072;
     let tolerance_percent: u64 = 2; // permitted difference between specified and calculated

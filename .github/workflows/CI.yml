@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - development
+
+jobs:
+  build_and_test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Install Rust Toolchain
+        run: rustup update --no-self-update stable
+      
+      - name: Setup Cargo Cache
+        uses: Swatinem/rust-cache@v2
+    
+      - name: Build
+        run: cargo build --verbose
+    
+      - name: Run Tests
+        run: cargo test --verbose
+             
+  publish_documentation:
+    # This job only runs when CI is running on the main branch
+    runs-on: windows-latest
+    needs: build_and_test
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Install Rust Toolchain
+        run: rustup update --no-self-update stable
+      
+      - name: Setup Cargo Cache
+        uses: Swatinem/rust-cache@v2
+ 
+      - name: Build Documentation
+        run: cargo doc --all --no-deps
+
+      # This step is necessary to create a root-level index.html file that redirects to the inside the project folder,
+      # otherwise when deployed to GitHub Pages no index will be found
+      - name: Create Index File
+        shell: cmd
+        run: |
+          cd target/doc
+          echo ^<meta http-equiv="refresh" content="0; url=chipolata/index.html"^> > index.html
+              
+      - name: Deploy Documentation
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./target/doc
+          force_orphan: true
