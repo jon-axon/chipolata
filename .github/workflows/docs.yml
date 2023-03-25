@@ -1,4 +1,4 @@
-name: Publish Documentation
+name: Build Documentation
 
 on:
   workflow_dispatch: 
@@ -7,15 +7,25 @@ jobs:
   build_and_publish:
     runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Build Docs
-      run: cargo doc --release --no-deps
-    - name: Publish Docs    
-      shell: cmd
-      run: |        
-        cd target/doc
-        git init
-        echo|set /p="<meta http-equiv="refresh" content="0; url=chipolata/index.html">" > index.html
-        git add .
-        git -c user.name="ci" -c user.email="ci" commit -m "Deploy documentation"
-        git push -f -q https://git:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} HEAD:gh-pages
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Install Rust Toolchain
+        run: rustup update --no-self-update stable
+ 
+      - name: Build Documentation
+        run: cargo doc --all --no-deps
+    
+      - name: Create Index File
+        shell: cmd
+        run: |
+          cd target/doc
+          echo|set /p="<meta http-equiv="refresh" content="0; url=chipolata/index.html">" > index.html
+          
+      - name: Deploy Documentation
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./target/doc
+          force_orphan: true
