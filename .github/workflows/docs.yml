@@ -16,16 +16,12 @@ jobs:
       - name: Build Documentation
         run: cargo doc --all --no-deps
 
-      - name: Create Index File
+      - name: Publish Documentation
         shell: cmd
         run: |
           cd target/doc
+          git init
           echo|set /p="<meta http-equiv="refresh" content="0; url=chipolata/index.html">" > index.html
-              
-      - name: Deploy Documentation
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: ./target/doc
-          force_orphan: true
+          git add .
+          git -c user.name="ci" -c user.email="ci" commit -m "Deploy documentation"
+          git push -f -q https://github.com/jon-axon/chipolata HEAD:gh-pages
