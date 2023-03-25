@@ -1,0 +1,20 @@
+name: Publish Documentation
+
+on:
+  workflow_dispatch: 
+      
+jobs:
+  test_and_build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build Docs
+      run: cargo doc --release --no-deps
+    - name: Publish Docs    
+      run: |
+        cd target/doc
+        git init
+        echo '<meta http-equiv="refresh" content="0; url=chipolata">' > index.html
+        git add .
+        git -c user.name='ci' -c user.email='ci' commit -m 'Deploy documentation'
+        git push -f -q https://git:${{ secrets.github_token }}@github.com/${{ github.repository }} HEAD:gh-pages
