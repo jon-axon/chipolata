@@ -17,5 +17,5 @@ jobs:
         git init
         echo|set /p="<meta http-equiv="refresh" content="0; url=chipolata/index.html">" > index.html
         git add .
-        git -c user.name='ci' -c user.email='ci' commit -m 'Deploy documentation'
+        git -c user.name="ci" -c user.email="ci" commit -m "Deploy documentation"
         git push -f -q https://git:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} HEAD:gh-pages
