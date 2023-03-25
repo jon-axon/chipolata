@@ -13,21 +13,21 @@ use rand::Rng;
 use serde_derive::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
-mod execute; // separate sub-module for all the instruction execution methods
+mod execute; // Separate sub-module for all the instruction execution methods
 #[cfg(test)]
-mod tests; // functional unit tests
+mod tests; // Functional unit tests
 #[cfg(test)]
-mod timing_tests; // non-functional (timing-related) unit tests
+mod timing_tests; // Non-functional (timing-related) unit tests
 
-/// The number of ms that should pass inbetween decrements of delay and sound timers.
+/// The number of ms that should pass inbetween decrements of delay and sound timers
 const TIMER_DECREMENT_INTERVAL_MICROSECONDS: u128 = 16666;
-/// The number of ms that should pass inbetween vblank interrupts.
+/// The number of ms that should pass inbetween vblank interrupts
 const VBLANK_INTERVAL_MICROSECONDS: u128 = 16666;
-/// The number of variable registers available.
+/// The number of variable registers available
 const VARIABLE_REGISTER_COUNT: usize = 16;
-/// The number of RPL user flags; SUPER-CHIP 1.1 emulation mode only.
+/// The number of RPL user flags; SUPER-CHIP 1.1 emulation mode only
 const RPL_REGISTER_COUNT: usize = 8;
-/// The maximum sprite height (pixels).
+/// The maximum sprite height (pixels)
 const MAX_SPRITE_HEIGHT: u8 = 15;
 /// The number of COSMAC VIP cycles used to execute one CHIP-8 interpreter cycle
 /// (used when emulating original COSMAC VIP variable instruction timings)
@@ -68,7 +68,7 @@ pub enum ProcessorStatus {
     Crashed,
     /// Execution paused (by host)
     Paused,
-    /// Execution copmpleted (program exited); SUPER-CHIP emulation mode only
+    /// Execution completed (program exited); SUPER-CHIP emulation mode only
     Completed,
 }
 
@@ -119,11 +119,11 @@ pub enum StateSnapshot {
 /// emulation in CHIP-8 mode
 #[derive(Debug, PartialEq)]
 pub enum VBlankStatus {
-    // No display instruction has been processed yet this frame
+    /// No display instruction has been processed yet this frame
     Idle,
-    // A display instruction is queued, awaiting v-blank interrupt
+    /// A display instruction is queued, awaiting v-blank interrupt
     WaitingForVBlank,
-    // THe v-blank interrupt has been set; drawing can proceed
+    /// THe v-blank interrupt has been set; drawing can proceed
     ReadyToDraw,
 }
 
@@ -284,8 +284,7 @@ impl Processor {
     /// Returns a copy of the current state of Chipolata.
     ///
     /// The minimal level of state reporting returns just a copy of the [Display] frame buffer
-    /// instance, from which the bitmapped [Display::pixels] 2-D array can be interrogated
-    /// for rendering purposes.
+    /// instance, from which the bitmapped pixel array can be interrogated for rendering purposes.
     ///
     /// The extended level of state reporting returns a copy of the [Display] frame buffer instance
     /// in addition to a copy of all registers and timers, the [Stack] and the [Memory].

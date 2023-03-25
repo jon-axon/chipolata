@@ -19,7 +19,7 @@ const HIGH_RES_COLUMN_SIZE_PIXELS: usize = 64;
 pub struct Display {
     /// Logically this is a two-dimensional array to hold the state of the display pixels
     /// (1 means on, 0 means off).  Physically, due to the fact the array size isn't know at compile
-    /// time (as the display size varies depending on [Processor::EmulationLevel]), this is implemented
+    /// time (as the display size varies depending on [EmulationLevel], this is implemented
     /// as a heap-allocated one-dimensional byte array, with the [std::ops::Index] trait implemented
     /// so as to simulate the expected 2D array indexing.
     ///
