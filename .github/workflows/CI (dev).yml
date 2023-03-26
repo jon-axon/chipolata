@@ -1,0 +1,25 @@
+name: CI (dev)
+
+on:
+  push:
+    branches:
+      - development
+
+jobs:
+  build_and_test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Install Rust Toolchain
+        run: rustup update --no-self-update stable
+      
+      - name: Setup Cargo Cache
+        uses: Swatinem/rust-cache@v2
+    
+      - name: Build
+        run: cargo build --verbose
+    
+      - name: Run Tests
+        run: cargo test --verbose             
