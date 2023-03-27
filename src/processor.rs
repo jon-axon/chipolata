@@ -118,7 +118,7 @@ pub enum StateSnapshot {
 /// An enum used to keep track of the state of the vertical blank interrupt, for accurate display
 /// emulation in CHIP-8 mode
 #[derive(Debug, PartialEq)]
-pub enum VBlankStatus {
+enum VBlankStatus {
     /// No display instruction has been processed yet this frame
     Idle,
     /// A display instruction is queued, awaiting v-blank interrupt
