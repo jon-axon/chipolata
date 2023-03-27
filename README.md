@@ -1,7 +1,148 @@
+# Chipolata: a CHIP-8/SUPER-CHIP interpreter with decoupled GUI
 
-Development: [![CI](https://github.com/jon-axon/chipolata/actions/workflows/CI.yml/badge.svg?branch=development)](https://github.com/jon-axon/chipolata/actions/workflows/CI.yml)
+[![CI (main)](https://github.com/jon-axon/chipolata/actions/workflows/CI%20(main).yml/badge.svg?branch=main)](https://github.com/jon-axon/chipolata/actions/workflows/CI%20(main).yml)
+[![CI (dev)](https://github.com/jon-axon/chipolata/actions/workflows/CI%20(dev).yml/badge.svg?branch=development)](https://github.com/jon-axon/chipolata/actions/workflows/CI%20(dev).yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Main: [![CI](https://github.com/jon-axon/chipolata/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/jon-axon/chipolata/actions/workflows/CI.yml)
+Chipolata is an emulator/interpreter for the [CHIP-8 virtual machine](https://en.wikipedia.org/wiki/CHIP-8), with configurable emulation modes for various popular extensions to the platform so as to provide compatibility with the majority of available CHIP-8 ROMs.
 
-# Chipolata
-A CHIP-8 emulator learning project built in Rust
+Chipolata is written in pure Rust, and comprises decoupled library and binary crates for the emulator engine and GUI respectively.
+
+# Who Chipolata is for
+
+Does the world really need yet another CHIP-8 emulator?  Probably not!  So, why might this be of interest to anyone?
+
+Chipolata was originally created as a learning project: an opportunity to get to grips with the Rust language and idioms whilst taking a first step into the world of emulator development.  However, as I progressed with the project I found myself becoming far more interested and engrossed in the platform and its history than I expected, and so ended-up refactoring and extending my emulator to the point where perhaps someone, somewhere, may have a use for it.  The two key elements of Chipolata that differentiate it from many other similar emulators are:
+
+* Emulator "engine" library entirely decoupled from the GUI code (separate Rust crates), with all communication done through a public API
+* Highly-configurable emulation compatibility options (with a design that supports taking this further in future)
+
+The types of people who might be interested in Chipolata are:
+
+1) CHIP-8/retro gaming enthusiasts wanting to run a wide variety of CHIP-8 ROMs designed for a number of different history CHIP-8 interpreters/extensions in a single, intuitive, robust desktop application.
+2) Programmers  wanting to build a CHIP-8 front-end from an existing emulator library, rather than building the entire platform from scratch.  For example, the current Chipolata GUI is built using the [egui](https://github.com/emilk/egui) immediate mode UI library; building an alternative front-end as a way of learning or experimenting with one of the [many other  Rust UI libraries](https://www.areweguiyet.com/) could make for an excellent project.
+3) Programmers new to Rust or to emulation who would like to try making some enhancements or improvements to an existing codebase before/instead of taking-on an entire project of their own.  There are several  ways in which Chipolata can be extended (for example the addition of a debugging UI, which was always my intention) that may be of interest to someone.
+
+If you are looking for a very mature, fully-fledged web-based CHIP-8 IDE with associated tools and wider ecosystem then the de facto standard is [Octo](https://github.com/JohnEarnest/chip8Archive), and you may be better off looking there.
+
+# Demo
+
+Here you can see Chipolata in action, briefly playing the game "*Spacefight 2091!*" and changing a few options within the GUI:
+
+![Animated demonstration of key features of the Chipolata GUI](/assets/screenshots/Chipolata%20Demo.gif)
+
+# GUI overview
+
+## Start-up screen
+This is displayed when Chipolata is first launched and again whenever the current program is unloaded (via the Stop button), and displays basic operating instructions plus the keymap:
+
+![The Chipolata GUI main screen](/assets/screenshots/GUI%20-%20main%20screen.png)
+
+---
+
+## Emulation Options dialogue box
+A modal dialogue box displayed whenever a new program is loaded or if the user clicks the Options button in the top bar.  From here, key settings of the emulator can be configured to allow fine-grained control over compatability options for different generations of ROMs.  Option sets can be saved to and loaded from JSON files for convenience:
+
+![The Chipolata GUI emulation options dialogue box](/assets/screenshots/GUI%20-%20options.png)
+
+---
+
+## Program execution
+While a program is running, the central pane is used to render the contents of the emulator's frame buffer (the resolution used will depend on whether we are in CHIP-8 or SUPER-CHIP emulation mode).  Execution can be paused and resumed, restarted, or stopped entirely, and the emulation speed can be altered without interrupting execution:
+
+![The Chipolata GUI in-game](/assets/screenshots/GUI%20-%20in-game.png)
+
+---
+
+## Error handling
+Any errors generated by the emulation engine are bubbled-up and displayed within the UI above the bottom status bar:
+
+![The Chipolata GUI error reporting](/assets/screenshots/GUI%20-%20error.png)
+
+# Emulator library overview
+
+The Chipolata library crate models the entire CHIP-8 virtual machine component-by-component, and favours the use of high-level abstractions over highly-optimised/in-lined code in an effort to prioritise easy of understanding and ease of use over the utmost efficiency.  Full, up-to-date `rustdoc` documentation is provided, and is linked within the [Further Reading](#further-reading) section.
+
+## Key features
+
+* A clean, intuitive public API, with the majority of interactions taking place through the `Processor` struct
+* Cycle timings handled within the library itself as part of the `execute_cycle()` method (based on the specified processor speed), meaning the hosting UI can simply call into the function as often as it wishes/is able to and not have to worry about the resulting simulation speed
+* Ability to export the internal state of the Chipolata virtual machine on-demand with different degrees of verbosity for different purposes (e.g. a minimal export of the frame-buffer for screen-rendering purposes, or a more comprehensive export of all register and memory contents for debugging)
+* Abstractions provided for both program ROMs and configuration option sets via the `Program` and `Options` structs, including methods for serialising and deserialising these to and from disk
+* A `ChipolataError` struct encapsulating an `ErrorDetail` enum with variants for many Chipolata/CHIP-8-specific error cases that may occur while running a ROM, bubbled-up gracefully to the hosting UI for handling or reporting
+* Comprehensive `rustc` unit test suite with over 320 test cases as per release v1.0.0 (run automatically as part of the CI workflow on every push to the `main` and `development` branches)
+
+## Configuration options
+
+Via its `Options` struct, Chipolata offers authentic emulation of all known quirks (such as implementation deviations from the original specification of certain opcodes) for the following historic CHIP-8 interpreters:
+
+* The [CHIP-8](https://chip-8.github.io/extensions/#chip-8) interpreter for the [RCA COSMAC VIP](https://en.wikipedia.org/wiki/COSMAC_VIP), created by Joseph Weisbecker in 1978 (the "original" CHIP-8)
+    - Configurable emulation of a COSMAC VIP with either 2KB or 4KB of RAM
+    - Optional simulation of original instruction execution timings as per the COSMAC VIP's 1.76Mhz RCA 1802 processor, based on Laurence Scotford's disassembly of the original CHIP-8 interpreter and his subsequent documentation of the CPU cycles required to execute each opcode (as per the detailed pages indexed [here](https://laurencescotford.com/chip-8-on-the-cosmac-vip-instruction-index/))
+* The [CHIP-48](https://chip-8.github.io/extensions/#chip-48) interpreter for the HP-48 graphic calculators, created by Andreas Gustafsson  in 1990
+* The [SUPER-CHIP 1.1](https://chip-8.github.io/extensions/#super-chip-11) interpreter for the HP-48S and HP-48SX graphic calculators, created by Erik Bryntse in 1991
+    - The [Octo](https://chip-8.github.io/extensions/#octo) deviations from SUPER-CHIP behaviour (please note Chipolata does *not* support Octo's own "XO-CHIP" extensions - yet!)
+
+Chipolata implements all enhanced features of SUPER-CHIP including high-resolution mode (128 x 64) and the new display instructions (scrolling, double-width sprite draw etc).
+
+Additionally, the following common configuration options are available in all emulation modes:
+
+* Target processor speed, in terms of the number of opcodes Chipolata will execute per second (this can also be changed dynamically by the user during program execution).  Please note this option is disabled when simulating original instruction timings in CHIP-8 mode as above, as in this case speed is fixed to be equivalent to the original COSMAC VIP
+* Program start location in RAM
+* Font start location in RAM
+
+# Quick start
+
+
+If you have questions, please use [GitHub Discussions](https://github.com/jon-axon/chipolata/discussions).
+
+# Repository organisation
+
+The Chipolata repo currently follows a traditional workflow with a `main` trunk branch and `development` long-lived feature branch (although it may be preferable at somepoint to replace this with a more lightweight [Git Flow](https://docs.github.com/en/get-started/quickstart/github-flow) approach).  Specifically, the branching strategy is as follows:
+
+* The `main` branch contains the latest release code (with appropriate tag assigned), and code may only be merged via Pull Request.
+* The `development` branch is used for staging sets of changes before the are ready to be merged into `main` as part of a new release.  Up until v1.0.0 I have been pushing changes directly into the `development` branch for convenience, however going forwards this branch should also only allow merges via Pull Request, and new code should instead by pushed to specific feature branches.
+* The `gh-pages` branch holds the HTML behind the [Chipolata GitHub Pages](https://jon-axon.github.io/chipolata/) site.  This branch should not be pushed-to directly, and is handled via the CI process (see below).
+
+Continuous Integration [workflows](https://github.com/jon-axon/chipolata/actions) exist for pushes to both `main` and `development`:
+
+* The `CI (dev)` GitHub Action builds and runs the unit test suite against the `development` branch
+* The `CI (main)` GitHub Action builds and runs the unit test suite against the `main` branch, and then also rebuilds all the `rustdoc` documentation and pushes this to the `gh-pages` branch
+* The GitHub-generated `pages-build-deployment` workflow publishes changes to the `gh-pages` branch to the Chipolata GitHub Pages site, and so completes the automated documentation generation process whenever new code is pushed to `main`.
+
+Should you wish to contribute anything to Chipolata, please feel free to fork the repo and raise a PR back to the `development` branch!
+
+# Further reading
+More detailed documentation around the design and inner-workings of Chipolata can be found on the [Chipolata GitHub Wiki](https://github.com/jon-axon/chipolata/wiki).
+
+The latest `rustdoc` documentation for the chipolata library crate can be found on [Chipolata GitHub Pages](https://jon-axon.github.io/chipolata/), and is an essential reference if building a new UI on top of the chipolata emulator library.  This documentation is automatically rebuilt via the Continuous Integration workflow whenever new code is pushed to the `main` branch, so will always be in-sync with the latest release.
+
+# Useful resources
+
+There are many, many CHIP-8 resources available on the web.  Following are a small number  I have found most useful while creating Chipolata.
+
+Building a CHIP-8 emulator:
+
+* [Tobias Langhoff's Guide to making a CHIP-8 emulator](https://tobiasvl.github.io/blog/write-a-chip-8-emulator/)
+* [Matt Mikolay's 'Mastering CHIP-8'](https://github.com/mattmikolay/chip-8/wiki/Mastering-CHIP%E2%80%908)
+* [Timendus CHIP-8 test suite](https://github.com/Timendus/chip8-test-suite)
+
+ROMs and other curated resources:
+
+* [The CHIP-8 Research Facility curated listed of CHIP-8 resources](https://chip-8.github.io/links/)
+* [John Earnest's CHIP-8 Archive](https://github.com/JohnEarnest/chip8Archive)
+
+Advanced/detailed references:
+
+* [Laurence Scotford's series of articles on the original CHIP-8 interpreter for the RCA COSMAC VIP](https://laurencescotford.com/chip-8-on-the-cosmac-vip-index/)
+* [The CHIP-8 Research Facility documentation of extensions to CHIP-8](https://chip-8.github.io/extensions/)
+
+Forums:
+
+* [Developing Emulators on Reddit](https://www.reddit.com/r/EmuDev/)
+
+# Licensing
+
+Chipolata and all its associated artefacts are made available under the MIT license. See [LICENSE](/LICENSE) for additional details.  Contributions to this repository are welcome, with the understanding that they will fall under the same licensing conditions.
+
+
