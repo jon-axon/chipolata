@@ -2,9 +2,13 @@
 name = "chipolata"
 version = "1.0.0"
 edition = "2021"
+license = "MIT"
 build = "build.rs"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+repository = "https://github.com/jon-axon/chipolata"
+readme = "README.md"
+description = """
+Chipolata: a CHIP-8/SUPER-CHIP interpreter
+"""
 
 [dependencies]
 eframe = "0.21.2"

@@ -1,4 +1,4 @@
-# Chipolata: a CHIP-8/SUPER-CHIP interpreter with decoupled GUI
+# Chipolata: a CHIP-8/SUPER-CHIP interpreter
 
 [![CI (main)](https://github.com/jon-axon/chipolata/actions/workflows/CI%20(main).yml/badge.svg?branch=main)](https://github.com/jon-axon/chipolata/actions/workflows/CI%20(main).yml)
 [![CI (dev)](https://github.com/jon-axon/chipolata/actions/workflows/CI%20(dev).yml/badge.svg?branch=development)](https://github.com/jon-axon/chipolata/actions/workflows/CI%20(dev).yml)
@@ -93,6 +93,89 @@ Additionally, the following common configuration options are available in all em
 
 # Quick start
 
+**Please note**: at present, Chipolata is only available for Windows.  There is nothing intrinsic to Chipolata that precludes compilation for other platforms; I have simply not had the need or opportunity to look into cross-compilation yet.  This is on the to-do list!  For now, the remainder of this section assumes the reader is similarly running a 64-bit Windows architecture.
+
+## Running the Chipolata desktop app
+If you simply want to use Chipolata itself, the quickest way to get up-and-running is to download the latest binary from [Releases](https://github.com/jon-axon/chipolata/releases).  The zip file artefact attached to the release can be extracted to a location of your choosing, and contains the following:
+
+* The ***chipolata.exe*** file
+* A ***resources*** folder, containing:
+    * An ***options*** folder that contains a number of pre-defined option set .json files that can be loaded from the "Emulation Options" dialogue box within Chipolata
+    * A ***roms*** folder that contains a number of CHIP-8 and SUPER-CHIP ROMs (.ch8 files) available in the public domain, divided into the following category sub-folders:
+        * ***demos***   - largely non-interactive CHIP-8 demo programs
+        * ***games***   - interactive games 
+        * ***superchip***   - games requiring SUPER-CHIP emulation support (be sure to select the appropriate emulation mode within Chipolata)
+        * ***tests***   - test ROMs mainly of use to interpreter developers to ensure their implementation of CHIP-8 is behaving as intended
+
+Chipolata is configured to statically link the C runtime, so the .exe file has no additional dependencies that must be pre-installed on the host computer.
+
+##  Setting up a local Rust development environment
+
+If you wish to modify/enhance Chipolata, or simply wish to compile the binary for yourself direct from the source code, then you will need a local development environment with the Rust toolchain installed, and some form of code editor to work with.  A popular choice for the latter is ***Visual Studio Code*** (VS Code).  The steps to configure a VS Code-based Rust development environment are as follows:
+
+i) Install the Rust toolchain using `rustup`, by following the simple instructions on the [Install Rust](https://www.rust-lang.org/tools/install) page on the official Rust website.
+
+ii) Install VS Code from the [Visual Studio Code download page](https://code.visualstudio.com/Download).
+
+iii) Install the ***rust-analyzer extension*** for VS Code from within the Extensions view (`Ctrl+Shift+X`) by searching for 'rust-analyzer'; install the **Release Version**.
+
+iv) If not already present, you will need to also [Install Git](https://git-scm.com/downloads) in order to be able to interact with the GitHub repo.
+
+Once installed, you can interact with the components of the Rust toolchain through a terminal window or the Command Prompt; if new to Rust you should familiarise yourself with these tools and commands (and in particular with `cargo`) before proceeding.
+
+## Working with the  Chipolata source code
+
+This section assumes you already have a GitHub account.  If not, please visit [Join GitHub](https://github.com/join) and sign up.
+
+If you would like to modify and recompile the Chipolata source code then you will need to first [Fork the Chipolata GitHub repo](https://github.com/jon-axon/chipolata/fork).
+
+Next you will need to clone your forked repo to your local environment to start working on it.  Please see [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) for instructions.
+
+Once you have a local copy of the repo you can start working on the source code within VS Code by selecting `File -> Open Folder` and choosing the corresponding local root `chipolata` folder (i.e. the folder containing the `cargo.toml` file).
+
+Useful Rust toolchain commands (executed within the Chipolata working directory) are:
+
+### Produce a debug build
+    cargo build
+This will create a .exe binary in the `chipolata\target\debug` folder.
+
+### Produce a release build
+    cargo build --release
+This will create an optimised .exe binary in the `chipolata\target\release` folder.
+
+### Run the Chipolata binary
+    cargo run
+This will build Chipolata in debug mode and run the executable for you.
+
+### Run the unit test suite
+    cargo test
+This will execute the entire unit test suite against the current codebase and report the results.
+
+### Run the unit test suite including ignored tests
+    cargo test -- --include-ignored
+This will execute the entire unit test suite including any tests that are ignored by default (typically those that involve performance/timings).
+
+### Rebuild `rustdoc` documentation
+    cargo doc
+This will recreate all the html documentation held in the `chipolata\target\doc` folder 
+structure.
+
+### Rebuild `rustdoc` documentation without dependencies
+    cargo doc --no-deps
+This will recreate the html documentation for the chipolata crate only (not the crates on which it is dependent).
+
+Use Git either on the command line or within the VS Code UI to commit changes and push them back to your forked GitHub repo.  Feel free to raise a Pull Request back to the `development` branch of the upstream [Chipolata repo](https://github.com/jon-axon/chipolata) if you've made changes that you think should be folded back in!
+
+## Using the Chipolata library as an external crate in a new project
+
+Chipolata is not published on [crates.io](https://crates.io) as I don't anticipate any demand for this.  However you can still add a dependency to the Chipolata library crate by specifying the GitHub repository directly in your package's `cargo.toml` manifest as follows:
+
+    [dependencies]
+    chipolata = { git = "https://github.com/jon-axon/chipolata.git"}
+
+Once the dependency is added, please see the [Further Reading](#further-reading) section for links to the documentation to help you get started making use of the Chipolata library.
+
+In the unlikely event that it is beneficial for anyone for Chipolata to be published on crates.io (for example if somebody wants to publish their own crate that in turn has a dependency on Chipolata) then please let me know.
 
 If you have questions, please use [GitHub Discussions](https://github.com/jon-axon/chipolata/discussions).
 
@@ -109,6 +192,8 @@ Continuous Integration [workflows](https://github.com/jon-axon/chipolata/actions
 * The `CI (dev)` GitHub Action builds and runs the unit test suite against the `development` branch
 * The `CI (main)` GitHub Action builds and runs the unit test suite against the `main` branch, and then also rebuilds all the `rustdoc` documentation and pushes this to the `gh-pages` branch
 * The GitHub-generated `pages-build-deployment` workflow publishes changes to the `gh-pages` branch to the Chipolata GitHub Pages site, and so completes the automated documentation generation process whenever new code is pushed to `main`.
+
+Currently there is no automated release workflow; the CI process only goes as far as building, testing, and publishing documentation for new code pushed to `main`.  Creation of tags, releases, and uploading associated artefacts is a manual step.  Automating this is on the to-do list!
 
 Should you wish to contribute anything to Chipolata, please feel free to fork the repo and raise a PR back to the `development` branch!
 
