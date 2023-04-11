@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"chipolata":[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.68.2/core/fmt/trait.Display.html\" title=\"trait core::fmt::Display\">Display</a> for <a class=\"enum\" href=\"chipolata/enum.ErrorDetail.html\" title=\"enum chipolata::ErrorDetail\">ErrorDetail</a>"],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.68.2/core/fmt/trait.Display.html\" title=\"trait core::fmt::Display\">Display</a> for <a class=\"struct\" href=\"chipolata/struct.ChipolataError.html\" title=\"struct chipolata::ChipolataError\">ChipolataError</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

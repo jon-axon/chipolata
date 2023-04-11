@@ -1,0 +1,3 @@
+(function() {var implementors = {
+"chipolata":[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.68.2/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"chipolata/struct.Options.html\" title=\"struct chipolata::Options\">Options</a>"],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.68.2/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"chipolata/struct.Program.html\" title=\"struct chipolata::Program\">Program</a>"]]
+};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
